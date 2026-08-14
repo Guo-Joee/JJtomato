@@ -120,7 +120,10 @@ function createMiniWindow() {
     backgroundColor: '#00000000',
     alwaysOnTop: true,
     skipTaskbar: true,
-    // 小窗只允许通过右键菜单调整尺寸，关闭 Windows 原生边缘缩放，避免拖动时尺寸漂移。
+    // 高 DPI 内屏下，Windows 透明无边框窗口会误触发原生 resize，导致圆窗变椭圆。
+    // 小窗本身由 CSS 绘制玻璃背景，不需要原生透明窗口。
+    transparent: true,
+    backgroundColor: '#00000000',
     resizable: false,
     hasShadow: false,
     webPreferences: {
@@ -191,7 +194,7 @@ if (gotSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('window:mini-drag-start', () => {
     if (!miniWindow || miniWindow.isDestroyed()) return null;
     miniDragState = {
-      window: miniWindow.getPosition(),
+      bounds: miniWindow.getBounds(),
       cursor: screen.getCursorScreenPoint(),
     };
     return miniDragState;
@@ -199,9 +202,15 @@ if (gotSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.on('window:mini-drag-move', () => {
     if (!miniWindow || miniWindow.isDestroyed() || !miniDragState) return;
     const cursor = screen.getCursorScreenPoint();
-    const x = miniDragState.window[0] + cursor.x - miniDragState.cursor.x;
-    const y = miniDragState.window[1] + cursor.y - miniDragState.cursor.y;
-    miniWindow.setPosition(Math.round(x), Math.round(y));
+    const x = miniDragState.bounds.x + cursor.x - miniDragState.cursor.x;
+    const y = miniDragState.bounds.y + cursor.y - miniDragState.cursor.y;
+    // 每次移动都写回拖动开始时的固定宽高，彻底阻止 Windows/DPI 命中测试改变尺寸。
+    miniWindow.setBounds({
+      x: Math.round(x),
+      y: Math.round(y),
+      width: miniDragState.bounds.width,
+      height: miniDragState.bounds.height,
+    });
   });
   ipcMain.on('window:mini-drag-end', () => {
     miniDragState = null;
