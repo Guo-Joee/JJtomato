@@ -205,10 +205,16 @@ function MiniTimer({ mode, remaining, running }) {
   const cfg = MODES[mode];
   const visual = VISUAL[mode];
   const progress = progressOf(remaining, cfg.seconds);
+  const restore = () => window.tomatoDesktop?.restoreMain();
   return (
-    <main className="mini-window" style={{ '--accent': visual.color }} onDoubleClick={() => window.tomatoDesktop?.restoreMain()}>
+    <main className="mini-window" style={{ '--accent': visual.color }} onDoubleClick={restore}>
       <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="51" /><circle className="mini-progress" cx="60" cy="60" r="51" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - progress} /></svg>
-      <div><TomatoMark size={28} mode={mode} /><strong>{formatTime(remaining)}</strong><small>{running ? '进行中' : cfg.label}</small></div>
+      <div className="mini-return-zone" onDoubleClick={restore} title="双击返回主页面">
+        <TomatoMark size={28} mode={mode} />
+        <strong>{formatTime(remaining)}</strong>
+        <small>{running ? '进行中' : cfg.label}</small>
+        <em>双击返回</em>
+      </div>
     </main>
   );
 }

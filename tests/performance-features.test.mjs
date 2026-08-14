@@ -28,9 +28,13 @@ test('透明度设置有 UI、持久化和 IPC 通道', () => {
 });
 
 test('置顶小窗支持双击返回主页面和右键尺寸菜单', () => {
-  assert.match(app, /onDoubleClick=\{\(\) => window\.tomatoDesktop\?\.restoreMain\(\)\}/);
+  assert.match(app, /const restore = \(\) => window\.tomatoDesktop\?\.restoreMain\(\)/);
+  assert.match(app, /className="mini-return-zone" onDoubleClick/);
+  assert.match(css, /\.mini-window > div[^}]*-webkit-app-region:\s*no-drag/s);
+  assert.match(css, /\.mini-window svg[^}]*-webkit-app-region:\s*no-drag/s);
   assert.match(main, /webContents\.on\('context-menu'/);
   assert.match(main, /resizeMiniWindow/);
+  assert.match(main, /if \(mainWindow\.isMinimized\(\)\) mainWindow\.restore\(\)/);
 });
 
 test('软件品牌名称为 JJtomato', () => {

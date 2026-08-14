@@ -44,6 +44,18 @@ function createMainWindow() {
   mainWindow.loadURL(url);
   mainWindow.once('ready-to-show', async () => {
     mainWindow.show();
+    if (process.env.TOMATO_MINI_DBLCLICK_TEST) {
+      createMiniWindow();
+      miniWindow.webContents.once('did-finish-load', async () => {
+        await miniWindow.webContents.executeJavaScript("document.querySelector('.mini-return-zone')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        fs.writeFileSync(process.env.TOMATO_MINI_DBLCLICK_TEST, JSON.stringify({
+          mainVisible: mainWindow.isVisible(),
+          miniVisible: miniWindow?.isVisible() ?? false,
+        }, null, 2));
+        app.quit();
+      });
+    }
     if (process.env.TOMATO_CAPTURE) {
       await new Promise((resolve) => setTimeout(resolve, 1200));
       const image = await mainWindow.webContents.capturePage();
@@ -175,7 +187,15 @@ if (gotSingleInstanceLock) app.whenReady().then(() => {
     return miniWindow?.getSize() ?? null;
   });
   ipcMain.handle('window:open-mini', () => { createMiniWindow(); mainWindow?.hide(); });
-  ipcMain.handle('window:restore-main', () => { mainWindow?.show(); mainWindow?.focus(); miniWindow?.hide(); });
+  ipcMain.handle('window:restore-main', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    miniWindow?.hide();
+    return true;
+  });
   ipcMain.handle('app:quit', () => { quitting = true; app.quit(); });
   ipcMain.handle('app:notify', (_event, payload) => {
     if (Notification.isSupported()) new Notification(payload).show();
