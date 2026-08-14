@@ -1,8 +1,8 @@
-version: 0.1.2
+version: 0.1.3
 files:
-  - url: JJtomato-Setup-0.1.2.exe
-    sha512: JGRfeMYa0f2MbyyD1ZIesavuJXqItsE1D8dtGpXcrdCy+7YFakQUmuGprE6XSPTygfoyiCrueBb2om5MxSy1MQ==
-    size: 82640620
-path: JJtomato-Setup-0.1.2.exe
-sha512: JGRfeMYa0f2MbyyD1ZIesavuJXqItsE1D8dtGpXcrdCy+7YFakQUmuGprE6XSPTygfoyiCrueBb2om5MxSy1MQ==
-releaseDate: '2026-08-14T05:29:54.215Z'
+  - url: JJtomato-Setup-0.1.3.exe
+    sha512: eh8DWFH5vLDJXTUs7iG2OHUdoAM3Lzyb/j2urrBTV9YrRTtmmQpRbUrj6w/rFDJEZrdkKJ9hchZVMbQ7yYR+BA==
+    size: 82641077
+path: JJtomato-Setup-0.1.3.exe
+sha512: eh8DWFH5vLDJXTUs7iG2OHUdoAM3Lzyb/j2urrBTV9YrRTtmmQpRbUrj6w/rFDJEZrdkKJ9hchZVMbQ7yYR+BA==
+releaseDate: '2026-08-14T05:57:06.891Z'

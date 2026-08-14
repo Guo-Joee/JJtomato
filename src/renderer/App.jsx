@@ -206,8 +206,25 @@ function MiniTimer({ mode, remaining, running }) {
   const visual = VISUAL[mode];
   const progress = progressOf(remaining, cfg.seconds);
   const restore = () => window.tomatoDesktop?.restoreMain();
+  const dragRef = useRef(null);
+  const handlePointerDown = async (event) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const origin = await window.tomatoDesktop?.startMiniDrag();
+    if (!origin) return;
+    dragRef.current = { originX: origin[0], originY: origin[1], startX: event.screenX, startY: event.screenY };
+  };
+  const handlePointerMove = (event) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    window.tomatoDesktop?.moveMini(drag.originX + event.screenX - drag.startX, drag.originY + event.screenY - drag.startY);
+  };
+  const handlePointerUp = (event) => {
+    dragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
   return (
-    <main className="mini-window" style={{ '--accent': visual.color }} onDoubleClick={restore}>
+    <main className="mini-window" style={{ '--accent': visual.color }} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} onDoubleClick={restore}>
       <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="51" /><circle className="mini-progress" cx="60" cy="60" r="51" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - progress} /></svg>
       <div className="mini-return-zone" onDoubleClick={restore} title="双击返回主页面">
         <TomatoMark size={28} mode={mode} />

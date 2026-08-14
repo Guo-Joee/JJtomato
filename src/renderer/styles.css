@@ -180,11 +180,11 @@ kbd { padding: 3px 7px; border-radius: 7px; background: rgba(255,255,255,.45); b
 .sheet-note { margin-top: 18px; font-size: 11px; line-height: 1.6; color: var(--muted); }
 .sheet-save { margin-top: auto; height: 46px; border-radius: 16px; color: white; background: var(--tomato); font-weight: 600; box-shadow: 0 10px 24px rgba(222,118,104,.25); }
 
-.mini-window { position: relative; width: 100%; height: 100%; display: grid; place-items: center; border-radius: 50%; background: radial-gradient(circle at 35% 25%, rgba(255,255,255,.72), rgba(255,245,236,.49)); border: 1px solid rgba(255,255,255,.67); backdrop-filter: blur(18px) saturate(1.08); -webkit-app-region: drag; overflow: hidden; cursor: move; }
+.mini-window { position: relative; width: 100%; height: 100%; display: grid; place-items: center; border-radius: 50%; background: radial-gradient(circle at 35% 25%, rgba(255,255,255,.72), rgba(255,245,236,.49)); border: 1px solid rgba(255,255,255,.67); backdrop-filter: blur(18px) saturate(1.08); -webkit-app-region: no-drag; overflow: hidden; cursor: move; user-select: none; }
 .mini-window svg { position: absolute; inset: 5%; width: 90%; height: 90%; transform: rotate(-90deg); -webkit-app-region: no-drag; }
 .mini-window svg circle { fill: none; stroke: rgba(255,255,255,.46); stroke-width: 5; }
 .mini-window .mini-progress { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .7s ease; filter: drop-shadow(0 0 5px color-mix(in srgb,var(--accent) 45%,transparent)); }
-.mini-window > div { display: flex; flex-direction: column; align-items: center; -webkit-app-region: no-drag; cursor: pointer; }
+.mini-window > div { display: flex; flex-direction: column; align-items: center; -webkit-app-region: no-drag; cursor: move; }
 .mini-window strong { margin-top: 4px; color: var(--accent); font-size: clamp(17px, 16vw, 32px); font-weight: 600; font-variant-numeric: tabular-nums; }
 .mini-window small { margin-top: 3px; color: var(--muted); font-size: clamp(8px, 6vw, 11px); letter-spacing: .08em; }
 .mini-window em { margin-top: 4px; color: var(--muted); font-size: clamp(7px, 4.5vw, 9px); font-style: normal; opacity: 0; transition: opacity .18s ease; }

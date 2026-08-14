@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('tomatoDesktop', {
   close: () => ipcRenderer.invoke('window:close'),
   setOpacity: (value) => ipcRenderer.invoke('window:set-opacity', value),
   resizeMini: (size) => ipcRenderer.invoke('window:resize-mini', size),
+  startMiniDrag: () => ipcRenderer.invoke('window:mini-drag-start'),
+  moveMini: (x, y) => ipcRenderer.send('window:mini-drag-move', { x, y }),
   openMini: () => ipcRenderer.invoke('window:open-mini'),
   restoreMain: () => ipcRenderer.invoke('window:restore-main'),
   quit: () => ipcRenderer.invoke('app:quit'),

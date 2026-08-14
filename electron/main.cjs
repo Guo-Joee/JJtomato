@@ -186,6 +186,12 @@ if (gotSingleInstanceLock) app.whenReady().then(() => {
     resizeMiniWindow(size);
     return miniWindow?.getSize() ?? null;
   });
+  ipcMain.handle('window:mini-drag-start', () => miniWindow?.getPosition() ?? null);
+  ipcMain.on('window:mini-drag-move', (_event, point) => {
+    if (!miniWindow || miniWindow.isDestroyed()) return;
+    if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+    miniWindow.setPosition(Math.round(point.x), Math.round(point.y));
+  });
   ipcMain.handle('window:open-mini', () => { createMiniWindow(); mainWindow?.hide(); });
   ipcMain.handle('window:restore-main', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
