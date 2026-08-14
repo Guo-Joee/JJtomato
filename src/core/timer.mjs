@@ -25,6 +25,16 @@ export function progressOf(remaining, total) {
   return Math.max(0, Math.min(1, 1 - remaining / total));
 }
 
+/**
+ * Calculate remaining whole seconds from a monotonic-clock deadline.
+ * `performance.now()` is monotonic, unlike wall-clock time, so changing the
+ * system clock cannot make a running countdown move backwards.
+ */
+export function remainingSecondsAt(deadline, now) {
+  if (!Number.isFinite(deadline) || !Number.isFinite(now)) return 0;
+  return Math.max(0, Math.ceil((deadline - now) / 1000));
+}
+
 export class TimerState {
   constructor() {
     this.mode = 'focus';

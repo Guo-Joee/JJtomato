@@ -7,6 +7,7 @@ let miniWindow;
 let tray;
 let quitting = false;
 let miniDragState = null;
+let latestTimerState = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) app.quit();
@@ -38,6 +39,8 @@ function createMainWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // 主窗口隐藏到置顶小窗后仍是唯一计时器 owner，不能被后台节流。
+      backgroundThrottling: false,
     },
   });
   windowMaterial(mainWindow);
@@ -56,6 +59,26 @@ function createMainWindow() {
         }, null, 2));
         app.quit();
       });
+    }
+    if (process.env.TOMATO_MINI_SYNC_REPORT) {
+      await mainWindow.webContents.executeJavaScript("document.querySelector('.primary-action')?.click()");
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      createMiniWindow();
+      mainWindow.hide();
+      if (miniWindow.webContents.isLoading()) {
+        await new Promise((resolve) => miniWindow.webContents.once('did-finish-load', resolve));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 3500));
+      const mainTime = await mainWindow.webContents.executeJavaScript("document.querySelector('.time')?.textContent");
+      const miniTime = await miniWindow.webContents.executeJavaScript("document.querySelector('.mini-return-zone strong')?.textContent");
+      fs.writeFileSync(process.env.TOMATO_MINI_SYNC_REPORT, JSON.stringify({
+        mainTime,
+        miniTime,
+        latestTimerState,
+        mainVisible: mainWindow.isVisible(),
+        miniVisible: miniWindow.isVisible(),
+      }, null, 2));
+      app.quit();
     }
     if (process.env.TOMATO_CAPTURE) {
       await new Promise((resolve) => setTimeout(resolve, 1200));
@@ -103,6 +126,9 @@ function createMainWindow() {
 function createMiniWindow() {
   if (miniWindow && !miniWindow.isDestroyed()) {
     miniWindow.show();
+    if (latestTimerState && !miniWindow.webContents.isLoading()) {
+      miniWindow.webContents.send('timer:state', latestTimerState);
+    }
     return;
   }
   const area = screen.getPrimaryDisplay().workArea;
@@ -130,6 +156,7 @@ function createMiniWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
   const base = isDev ? 'http://127.0.0.1:5173' : `file://${path.join(__dirname, '../dist/index.html')}`;
@@ -237,7 +264,13 @@ if (gotSingleInstanceLock) app.whenReady().then(() => {
     try { return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); }
     catch { return null; }
   });
-  ipcMain.on('timer:state', (_event, state) => miniWindow?.webContents.send('timer:state', state));
+  ipcMain.handle('timer:get-state', () => latestTimerState);
+  ipcMain.on('timer:state', (_event, state) => {
+    latestTimerState = state;
+    if (miniWindow && !miniWindow.isDestroyed() && !miniWindow.webContents.isLoading()) {
+      miniWindow.webContents.send('timer:state', state);
+    }
+  });
 });
 
 app.on('window-all-closed', (event) => event.preventDefault());

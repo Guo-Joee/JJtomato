@@ -51,6 +51,22 @@ test('置顶小窗支持双击返回主页面和右键尺寸菜单', () => {
   assert.match(main, /if \(mainWindow\.isMinimized\(\)\) mainWindow\.restore\(\)/);
 });
 
+test('隐藏主窗口后计时器不会被 Electron 后台节流', () => {
+  assert.match(main, /backgroundThrottling:\s*false/);
+});
+
+test('小窗加载后会立即拉取主窗口的最新计时状态', () => {
+  assert.match(main, /let latestTimerState/);
+  assert.match(main, /timer:get-state/);
+  assert.match(main, /latestTimerState\s*=\s*state/);
+  assert.match(app, /getTimerState\(\)/);
+  assert.match(app, /applyMiniState/);
+});
+
+test('计时状态只能由主窗口发布，小窗不能反向发送默认时间', () => {
+  assert.match(app, /if \(!isMini\) window\.tomatoDesktop\?\.sendTimerState\(statePayload\)/);
+});
+
 test('软件品牌名称为 JJtomato', () => {
   assert.equal(pkg.name, 'jjtomato');
   assert.match(app, />JJtomato</);

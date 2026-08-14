@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TimerState, MODES, nextMode, formatTime, progressOf } from '../src/core/timer.mjs';
+import { TimerState, MODES, nextMode, formatTime, progressOf, remainingSecondsAt } from '../src/core/timer.mjs';
 
 test('阶段配置包含专注、短休、长休且时长正确', () => {
   assert.equal(MODES.focus.seconds, 25 * 60);
@@ -36,4 +36,14 @@ test('进度百分比被限制在 0 到 1', () => {
   assert.equal(progressOf(0, 1500), 1);
   assert.equal(progressOf(-5, 1500), 1);
   assert.equal(progressOf(2000, 1500), 0);
+});
+
+test('剩余时间根据单调时钟计算，时间向前时不会回跳增加', () => {
+  const deadline = 25_000;
+  assert.equal(remainingSecondsAt(deadline, 0), 25);
+  assert.equal(remainingSecondsAt(deadline, 1_001), 24);
+  assert.equal(remainingSecondsAt(deadline, 4_500), 21);
+  assert.ok(remainingSecondsAt(deadline, 4_501) <= remainingSecondsAt(deadline, 4_500));
+  assert.equal(remainingSecondsAt(deadline, 25_000), 0);
+  assert.equal(remainingSecondsAt(deadline, 30_000), 0);
 });

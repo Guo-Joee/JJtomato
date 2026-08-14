@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Check, Coffee, ListTodo, Minus, Pause, Play, Plus, RotateCcw,
   Settings, SkipForward, Square, Trash2, X,
 } from 'lucide-react';
-import { MODES, formatTime, nextMode, progressOf } from '../core/timer.mjs';
+import { MODES, formatTime, nextMode, progressOf, remainingSecondsAt } from '../core/timer.mjs';
 import { loadJson, saveJson } from '../core/storage.mjs';
 
 const VISUAL = {
@@ -250,44 +250,86 @@ export default function App() {
     focus: 25, shortBreak: 5, longBreak: 15,
   }));
   const timerRef = useRef(null);
+  const deadlineRef = useRef(null);
 
   const modeSeconds = durations[mode] * 60;
   const statePayload = useMemo(() => ({ mode, remaining, running, total: modeSeconds }), [mode, remaining, running, modeSeconds]);
 
-  const switchMode = (next) => { setMode(next); setRemaining(durations[next] * 60); setRunning(false); };
-  const reset = () => { setRemaining(modeSeconds); setRunning(false); };
+  const switchMode = (next) => {
+    deadlineRef.current = null;
+    setMode(next);
+    setRemaining(durations[next] * 60);
+    setRunning(false);
+  };
+  const reset = () => {
+    deadlineRef.current = null;
+    setRemaining(modeSeconds);
+    setRunning(false);
+  };
+  const startTimer = () => {
+    if (running || remaining <= 0) return;
+    deadlineRef.current = performance.now() + remaining * 1000;
+    setRunning(true);
+  };
+  const pauseTimer = () => {
+    if (!running) return;
+    const nextRemaining = deadlineRef.current == null
+      ? remaining
+      : remainingSecondsAt(deadlineRef.current, performance.now());
+    deadlineRef.current = null;
+    setRemaining(nextRemaining);
+    setRunning(false);
+  };
+  const toggleRunning = useCallback(() => {
+    if (running) pauseTimer();
+    else startTimer();
+  }, [running, remaining]);
   const skip = () => switchMode(nextMode(mode, completed));
 
   useEffect(() => {
     if (!running) return undefined;
-    timerRef.current = window.setInterval(() => {
-      setRemaining((value) => {
-        if (value <= 1) {
-          window.clearInterval(timerRef.current);
-          setRunning(false);
-          const nextCompleted = mode === 'focus' ? completed + 1 : completed;
-          if (mode === 'focus') setCompleted(nextCompleted);
-          window.tomatoDesktop?.notify(mode === 'focus' ? '专注完成' : '休息结束', mode === 'focus' ? '做得很好，起来走一走吧。' : '准备好开始下一个番茄了吗？');
-          const next = nextMode(mode, nextCompleted);
-          window.setTimeout(() => switchMode(next), 0);
-          return 0;
-        }
-        return value - 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(timerRef.current);
+
+    let intervalId;
+    const tick = () => {
+      if (deadlineRef.current == null) return;
+      const nextRemaining = remainingSecondsAt(deadlineRef.current, performance.now());
+      // A delayed renderer callback may observe an older value. Never allow
+      // the displayed countdown to increase because of that stale callback.
+      setRemaining((value) => Math.min(value, nextRemaining));
+      if (nextRemaining > 0) return;
+
+      window.clearInterval(intervalId);
+      timerRef.current = null;
+      deadlineRef.current = null;
+      setRunning(false);
+      const nextCompleted = mode === 'focus' ? completed + 1 : completed;
+      if (mode === 'focus') setCompleted(nextCompleted);
+      window.tomatoDesktop?.notify(mode === 'focus' ? '专注完成' : '休息结束', mode === 'focus' ? '做得很好，起来走一走吧。' : '准备好开始下一个番茄了吗？');
+      const next = nextMode(mode, nextCompleted);
+      window.setTimeout(() => switchMode(next), 0);
+    };
+
+    intervalId = window.setInterval(tick, 250);
+    timerRef.current = intervalId;
+    tick();
+    return () => {
+      window.clearInterval(intervalId);
+      if (timerRef.current === intervalId) timerRef.current = null;
+    };
   }, [running, mode, completed]);
 
   useEffect(() => {
     const handler = (event) => {
-      if (event.code === 'Space' && !settingsOpen) { event.preventDefault(); setRunning((r) => !r); }
+      if (event.code === 'Space' && !settingsOpen) { event.preventDefault(); toggleRunning(); }
       if (event.key.toLowerCase() === 'r' && !settingsOpen) reset();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [settingsOpen, modeSeconds]);
+  }, [settingsOpen, modeSeconds, toggleRunning]);
 
-  useEffect(() => { window.tomatoDesktop?.sendTimerState(statePayload); }, [statePayload]);
+  useEffect(() => {
+    if (!isMini) window.tomatoDesktop?.sendTimerState(statePayload);
+  }, [isMini, statePayload]);
   useEffect(() => { saveJson(localStorage, 'tomato.tasks', tasks); }, [tasks]);
   useEffect(() => { saveJson(localStorage, 'tomato.completed', completed); }, [completed]);
   useEffect(() => { saveJson(localStorage, 'tomato.durations', durations); }, [durations]);
@@ -296,10 +338,20 @@ export default function App() {
     window.tomatoDesktop?.setOpacity(opacity);
   }, [opacity]);
   useEffect(() => {
-    if (!isMini) return;
-    window.tomatoDesktop?.onMiniState((state) => {
-      setMode(state.mode); setRemaining(state.remaining); setRunning(state.running);
-    });
+    if (!isMini) return undefined;
+    let active = true;
+    const applyMiniState = (state) => {
+      if (!active || !state) return;
+      setMode(state.mode);
+      setRemaining(state.remaining);
+      setRunning(state.running);
+    };
+    const unsubscribe = window.tomatoDesktop?.onMiniState(applyMiniState);
+    window.tomatoDesktop?.getTimerState().then(applyMiniState).catch(() => {});
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
   }, [isMini]);
 
   if (isMini) return <MiniTimer mode={mode} remaining={remaining} running={running} />;
@@ -310,7 +362,7 @@ export default function App() {
       <TitleBar />
       <ModeSwitcher mode={mode} onChange={switchMode} />
       <main className="dashboard">
-        <TimerHero mode={mode} remaining={remaining} running={running} onToggle={() => setRunning((v) => !v)} onReset={reset} onSkip={skip} />
+        <TimerHero mode={mode} remaining={remaining} running={running} onToggle={toggleRunning} onReset={reset} onSkip={skip} />
         <TasksPanel tasks={tasks} setTasks={setTasks} />
       </main>
       <footer className="bottom-bar glass-line">

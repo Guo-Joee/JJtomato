@@ -13,7 +13,12 @@ contextBridge.exposeInMainWorld('tomatoDesktop', {
   quit: () => ipcRenderer.invoke('app:quit'),
   saveSettings: (settings) => ipcRenderer.invoke('store:settings', settings),
   loadSettings: () => ipcRenderer.invoke('store:load-settings'),
+  getTimerState: () => ipcRenderer.invoke('timer:get-state'),
   notify: (title, body) => ipcRenderer.invoke('app:notify', { title, body }),
-  onMiniState: (callback) => ipcRenderer.on('timer:state', (_event, value) => callback(value)),
+  onMiniState: (callback) => {
+    const handler = (_event, value) => callback(value);
+    ipcRenderer.on('timer:state', handler);
+    return () => ipcRenderer.removeListener('timer:state', handler);
+  },
   sendTimerState: (value) => ipcRenderer.send('timer:state', value),
 });
