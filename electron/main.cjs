@@ -119,7 +119,8 @@ function createMiniWindow() {
     backgroundColor: '#00000000',
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: true,
+    // 小窗只允许通过右键菜单调整尺寸，关闭 Windows 原生边缘缩放，避免拖动时尺寸漂移。
+    resizable: false,
     hasShadow: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

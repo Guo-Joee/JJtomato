@@ -36,6 +36,7 @@ test('置顶小窗支持双击返回主页面和右键尺寸菜单', () => {
   assert.match(main, /window:mini-drag-start/);
   assert.match(main, /window:mini-drag-move/);
   assert.match(css, /\.mini-window[^}]*-webkit-app-region:\s*no-drag/s);
+  assert.match(main, /resizable:\s*false/);
   assert.match(main, /webContents\.on\('context-menu'/);
   assert.match(main, /resizeMiniWindow/);
   assert.match(main, /if \(mainWindow\.isMinimized\(\)\) mainWindow\.restore\(\)/);
