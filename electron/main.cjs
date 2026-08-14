@@ -150,7 +150,7 @@ function resizeMiniWindow(size) {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, '../assets/icon.png'));
+  const icon = nativeImage.createFromPath(path.join(__dirname, '../assets/icon.ico'));
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 20, height: 20 }));
   tray.setToolTip('JJtomato');
   tray.setContextMenu(Menu.buildFromTemplate([

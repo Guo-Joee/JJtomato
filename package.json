@@ -1,6 +1,6 @@
 {
   "name": "jjtomato",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "JJtomato：番茄 × ins 玻璃风桌面番茄钟",
   "author": "Guo-Joee",
   "main": "electron/main.cjs",
@@ -37,9 +37,9 @@
     "electronLanguages": ["zh-CN", "en-US"],
     "win": {
       "target": ["portable", "nsis"],
-      "icon": "assets/icon.png",
+      "icon": "assets/icon.ico",
       "artifactName": "JJtomato-${version}-Portable.${ext}",
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "signExecutable": false
     },
     "nsis": {

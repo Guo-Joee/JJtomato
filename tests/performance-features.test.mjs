@@ -43,6 +43,15 @@ test('软件品牌名称为 JJtomato', () => {
   assert.match(main, /title: 'JJtomato'/);
 });
 
+test('Windows 使用统一多尺寸番茄 ICO，托盘与打包配置指向同一资源', () => {
+  const ico = fs.readFileSync(path.join(root, 'assets/icon.ico'));
+  assert.equal(ico.readUInt16LE(0), 0);
+  assert.equal(ico.readUInt16LE(2), 1);
+  assert.equal(ico.readUInt16LE(4), 8);
+  assert.match(main, /assets\/icon\.ico/);
+  assert.equal(pkg.build.win.icon, 'assets/icon.ico');
+});
+
 test('运行时依赖不包含构建工具和前端源码依赖', () => {
   assert.ok(!pkg.dependencies?.electron);
   assert.ok(!pkg.dependencies?.['electron-builder']);
