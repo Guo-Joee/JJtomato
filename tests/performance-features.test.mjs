@@ -33,8 +33,11 @@ test('置顶小窗支持双击返回主页面和右键尺寸菜单', () => {
   assert.match(app, /onPointerDown=\{handlePointerDown\}/);
   assert.match(app, /onPointerMove=\{handlePointerMove\}/);
   assert.match(app, /startMiniDrag/);
+  assert.doesNotMatch(app, /event\.screenX|event\.screenY/);
   assert.match(main, /window:mini-drag-start/);
   assert.match(main, /window:mini-drag-move/);
+  assert.match(main, /screen\.getCursorScreenPoint\(\)/);
+  assert.match(main, /window:mini-drag-end/);
   assert.match(css, /\.mini-window[^}]*-webkit-app-region:\s*no-drag/s);
   assert.match(main, /resizable:\s*false/);
   assert.match(main, /webContents\.on\('context-menu'/);

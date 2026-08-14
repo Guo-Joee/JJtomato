@@ -210,17 +210,18 @@ function MiniTimer({ mode, remaining, running }) {
   const handlePointerDown = async (event) => {
     if (event.button !== 0) return;
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    dragRef.current = { pending: true };
     const origin = await window.tomatoDesktop?.startMiniDrag();
-    if (!origin) return;
-    dragRef.current = { originX: origin[0], originY: origin[1], startX: event.screenX, startY: event.screenY };
+    if (dragRef.current && origin) dragRef.current = { active: true };
   };
   const handlePointerMove = (event) => {
     const drag = dragRef.current;
-    if (!drag) return;
-    window.tomatoDesktop?.moveMini(drag.originX + event.screenX - drag.startX, drag.originY + event.screenY - drag.startY);
+    if (!drag?.active) return;
+    window.tomatoDesktop?.moveMini();
   };
   const handlePointerUp = (event) => {
     dragRef.current = null;
+    window.tomatoDesktop?.endMiniDrag();
     event.currentTarget.releasePointerCapture?.(event.pointerId);
   };
   return (

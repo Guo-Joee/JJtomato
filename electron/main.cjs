@@ -6,6 +6,7 @@ let mainWindow;
 let miniWindow;
 let tray;
 let quitting = false;
+let miniDragState = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) app.quit();
@@ -187,11 +188,23 @@ if (gotSingleInstanceLock) app.whenReady().then(() => {
     resizeMiniWindow(size);
     return miniWindow?.getSize() ?? null;
   });
-  ipcMain.handle('window:mini-drag-start', () => miniWindow?.getPosition() ?? null);
-  ipcMain.on('window:mini-drag-move', (_event, point) => {
-    if (!miniWindow || miniWindow.isDestroyed()) return;
-    if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
-    miniWindow.setPosition(Math.round(point.x), Math.round(point.y));
+  ipcMain.handle('window:mini-drag-start', () => {
+    if (!miniWindow || miniWindow.isDestroyed()) return null;
+    miniDragState = {
+      window: miniWindow.getPosition(),
+      cursor: screen.getCursorScreenPoint(),
+    };
+    return miniDragState;
+  });
+  ipcMain.on('window:mini-drag-move', () => {
+    if (!miniWindow || miniWindow.isDestroyed() || !miniDragState) return;
+    const cursor = screen.getCursorScreenPoint();
+    const x = miniDragState.window[0] + cursor.x - miniDragState.cursor.x;
+    const y = miniDragState.window[1] + cursor.y - miniDragState.cursor.y;
+    miniWindow.setPosition(Math.round(x), Math.round(y));
+  });
+  ipcMain.on('window:mini-drag-end', () => {
+    miniDragState = null;
   });
   ipcMain.handle('window:open-mini', () => { createMiniWindow(); mainWindow?.hide(); });
   ipcMain.handle('window:restore-main', () => {

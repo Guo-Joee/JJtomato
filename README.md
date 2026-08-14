@@ -9,6 +9,13 @@
 - 小窗尺寸继续通过右键菜单调整
 - 保留 v0.1.3 的 Pointer Events + Electron IPC 拖动方案
 
+### v0.1.5（当前修复）
+
+- 修复笔记本内屏高 DPI 下拖动小窗会慢慢变大的问题
+- 不再混用浏览器 `screenX/screenY` 与 Electron 窗口坐标
+- 改用 Electron `screen.getCursorScreenPoint()` 统一处理多显示器坐标
+- 兼容笔记本内屏与外接副屏不同缩放比例
+
 ### v0.1.3
 
 - 修复置顶小窗无法左键长按拖动的问题
