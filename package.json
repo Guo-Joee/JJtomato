@@ -1,0 +1,63 @@
+{
+  "name": "jjtomato",
+  "version": "0.1.7",
+  "description": "JJtomato：番茄 × ins 玻璃风桌面番茄钟",
+  "author": "Guo-Joee",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "test": "node --test tests/*.test.mjs",
+    "electron": "electron .",
+    "dist": "npm run build && electron-builder --win portable nsis"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.0.5",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "lucide-react": "0.487.0",
+    "motion": "12.23.24",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "vite": "8.2.1"
+  },
+  "build": {
+    "appId": "life.joee.jjtomato",
+    "productName": "JJtomato",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "JJtomato-${version}-Portable.${ext}",
+      "signAndEditExecutable": true,
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "JJtomato",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "JJtomato-Setup-${version}.${ext}"
+    }
+  }
+}

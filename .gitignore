@@ -1,0 +1,12 @@
+node_modules/
+electron-dist/
+release-*/
+release-local/
+release/win-unpacked/
+release/*-Portable.exe
+release/builder-debug.yml
+release/latest.yml
+dist/
+.vite/
+*.log
+.DS_Store
