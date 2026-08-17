@@ -152,3 +152,10 @@ test('Todo 总览按任务 ID 合并当前任务与历史快照，避免重复�
   assert.match(app, /records\.set\(String\(item\.id\)/);
   assert.match(app, /\[\.\.\.records\.values\(\)\]/);
 });
+
+test('长休小窗使用与其他模式一致的填色杯子图案', () => {
+  assert.match(app, /className="break-mark coffee-mark"/);
+  assert.match(app, /<i \/><b \/><em \/>/);
+  assert.match(css, /\.coffee-mark::before[^}]*background:/s);
+  assert.match(css, /\.coffee-mark b[^}]*border:/s);
+});

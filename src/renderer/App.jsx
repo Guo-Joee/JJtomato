@@ -42,7 +42,9 @@ function TomatoMark({ size = 30, mode = 'focus' }) {
   if (mode === 'shortBreak') {
     return <span className="leaf-mark" style={{ width: size, height: size }} aria-hidden="true" />;
   }
-  if (mode === 'longBreak') return <Coffee size={size * .74} strokeWidth={1.7} />;
+  if (mode === 'longBreak') {
+    return <span className="break-mark coffee-mark" style={{ width: size, height: size }} aria-hidden="true"><i /><b /><em /></span>;
+  }
   return (
     <span className="tomato-mark" style={{ width: size, height: size, '--tomato': tone }} aria-hidden="true">
       <i /><b />
