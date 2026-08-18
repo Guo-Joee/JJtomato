@@ -149,6 +149,21 @@ export function updateTaskInTree(tasks, targetId, updater) {
   });
 }
 
+export function buildTimelineTaskGroups({ history = {}, currentTasks = [], today, days = [] }) {
+  const byId = new Map();
+  Object.values(history).forEach((day) => {
+    (day.tasks || []).forEach((task) => {
+      const item = normalizeTask(task, day.date);
+      byId.set(String(item.id), { ...item, timelineDate: item.plannedDate || day.date });
+    });
+  });
+  currentTasks.forEach((task) => {
+    const item = normalizeTask(task, today);
+    byId.set(String(item.id), { ...item, timelineDate: item.plannedDate || today });
+  });
+  return days.map((date) => ({ date, tasks: [...byId.values()].filter((task) => task.timelineDate === date) }));
+}
+
 export function buildDailyTodoMarkdown({ date, tasks = [], edibleTomatoes = 0, digestedTomatoes = 0 }) {
   const completedTasks = tasks.filter((task) => task.done);
   const pendingTasks = tasks.filter((task) => !task.done);

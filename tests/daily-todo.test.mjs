@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, consumeTaskTomatoes, dailyStatsForDate, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate, addSubtask, completeTaskTree, carryOverTaskTree, summarizeTaskTree, flattenTaskTree, formatDuration, summarizeDay, toggleSubtaskCompletion, updateTaskInTree } from '../src/core/daily-todo.mjs';
+import { buildDailyTodoMarkdown, buildMultiDayMarkdown, buildTimelineTaskGroups, carryOverTasks, consumeTaskTomatoes, dailyStatsForDate, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate, addSubtask, completeTaskTree, carryOverTaskTree, summarizeTaskTree, flattenTaskTree, formatDuration, summarizeDay, toggleSubtaskCompletion, updateTaskInTree } from '../src/core/daily-todo.mjs';
 
 test('主任务树可以展开为带主任务名称的历史回顾记录', () => {
   const rows = flattenTaskTree({ id: 1, text: '复习通信协议', subtasks: [{ id: 2, text: 'IIC', done: true, parentId: 1 }] }, '2026-08-18');
@@ -88,6 +88,12 @@ test('主任务所需番茄按未完成子任务汇总，并受库存限制', ()
   assert.equal(amount, 2);
   assert.equal(consumeTaskTomatoes({ pomodoros: amount }, 0).ok, false);
   assert.equal(consumeTaskTomatoes({ pomodoros: amount }, 2).ok, true);
+});
+
+test('8/17 未完成任务顺延后出现在 8/18，历史快照不会覆盖当前顺延日期', () => {
+  const pending = carryOverTasks([{ id: 17, text: '8/17 未完成', done: false, pomodoros: 1, plannedDate: '2026-08-17', addedDate: '2026-08-17', subtasks: [] }], '2026-08-18');
+  const groups = buildTimelineTaskGroups({ history: { '2026-08-17': { date: '2026-08-17', tasks: [{ id: 17, text: '8/17 未完成', done: false, pomodoros: 1, plannedDate: '2026-08-17', subtasks: [] }] } }, currentTasks: pending, today: '2026-08-18', days: ['2026-08-17', '2026-08-18'] });
+  assert.equal(groups[1].tasks[0].plannedDate, '2026-08-18');
 });
 
 test('历史 Todo 可以通过 ID 更新嵌套主任务或子任务名称和状态', () => {

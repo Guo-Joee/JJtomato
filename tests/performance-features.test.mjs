@@ -147,10 +147,8 @@ test('Todo 总览使用竖向时间轴而不是日期表格', () => {
   assert.match(css, /\.timeline-task/);
 });
 
-test('Todo 总览按主任务 ID 合并当前任务与历史快照，避免重复显示', () => {
-  assert.match(app, /const rootsById = new Map\(\)/);
-  assert.match(app, /rootsById\.set\(String\(root\.id\)/);
-  assert.match(app, /\[\.\.\.rootsById\.values\(\)\]/);
+test('Todo 总览使用统一时间轴分组逻辑，当前顺延任务覆盖历史快照', () => {
+  assert.match(app, /buildTimelineTaskGroups/);
 });
 
 test('子任务通过右键主任务菜单创建，不显示常驻输入框', () => {
@@ -229,6 +227,10 @@ test('计时设置保存后空闲计时器立即更新，运行中显示下次�
 test('专注台主任务完成状态由 task-group 驱动绿色对勾和删除线', () => {
   assert.match(css, /\.task-group\.done\s*>\s*\.task\s*>\s*\.check\s*\{/);
   assert.match(css, /\.task-group\.done\s+\.task\s*>\s*span/);
+});
+
+test('Todo 总览切换时声明主任务折叠状态，避免渲染异常', () => {
+  assert.match(app, /const \[collapsedParents, setCollapsedParents\] = useState\(\{\}\)/);
 });
 
 test('长休小窗使用与其他模式一致的填色杯子图案', () => {

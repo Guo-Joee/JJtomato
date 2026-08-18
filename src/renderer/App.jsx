@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { MODES, formatTime, nextMode, progressOf, remainingSecondsAt } from '../core/timer.mjs';
 import { loadJson, saveJson } from '../core/storage.mjs';
-import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, completeTaskTree, consumeTaskTomatoes, dailyStatsForDate, daysForRange, flattenTaskTree, formatDuration, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, shiftDate, summarizeDay, summarizeTaskTree, toggleSubtaskCompletion } from '../core/daily-todo.mjs';
+import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, buildTimelineTaskGroups, carryOverTasks, completeTaskTree, consumeTaskTomatoes, dailyStatsForDate, daysForRange, flattenTaskTree, formatDuration, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, shiftDate, summarizeDay, summarizeTaskTree, toggleSubtaskCompletion, updateTaskInTree } from '../core/daily-todo.mjs';
 
 const VISUAL = {
   focus: {
@@ -303,13 +303,11 @@ function TodoOverview({ tasks, history, today, range, anchorDate, selectedDates,
 function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions, range, anchorDate, selectedDates, onRangeChange, onAnchorChange, onSelectDate, onToggleTask, onUpdateHistoricalTask, onExport }) {
   const [editing, setEditing] = useState(null);
   const [collapsedDays, setCollapsedDays] = useState({});
+  const [collapsedParents, setCollapsedParents] = useState({});
   const beginEdit = (task, date) => { setEditing(`${date}:${task.id}`); setDraftText(task.text); };
   const saveEdit = (task, date) => { const text = draftText.trim(); if (text && text !== task.text) onUpdateHistoricalTask(date, task.id, { text }); setEditing(null); };
   const days = daysForRange(range, anchorDate);
-  const rootsById = new Map();
-  Object.values(history || {}).forEach((day) => taskRootsForDate(day.tasks || [], day.date).forEach((root) => rootsById.set(String(root.id), { ...root, timelineDate: root.date })));
-  taskRootsForDate(tasks, today).forEach((root) => rootsById.set(String(root.id), { ...root, timelineDate: root.date }));
-  const groups = days.map((date) => ({ date, tasks: [...rootsById.values()].filter((task) => task.timelineDate === date) })).filter((group) => group.tasks.length || group.date === today || range === 'day');
+  const groups = buildTimelineTaskGroups({ history, currentTasks: tasks, today, days }).filter((group) => group.tasks.length || group.date === today || range === 'day');
   const selected = new Set(selectedDates);
   const selectedSummary = summarizeDay(history?.[anchorDate] || { focusSessions: focusSessions?.[anchorDate] || [] });
   const rangeLabel = range === 'month' ? anchorDate.slice(0, 7) : range === 'week' ? `${days[0]} ～ ${days.at(-1)}` : anchorDate;
@@ -461,6 +459,7 @@ export default function App() {
     focus: 25, shortBreak: 5, longBreak: 15,
   }));
   const [pendingDurationUpdate, setPendingDurationUpdate] = useState(false);
+  const previousTodayRef = useRef(today);
   const timerRef = useRef(null);
   const deadlineRef = useRef(null);
 
@@ -468,7 +467,11 @@ export default function App() {
     const interval = window.setInterval(() => {
       const next = localDateKey();
       if (next === today) return;
-      setTasks((items) => carryOverTasks(items, next));
+      setTasks((items) => {
+        const nextItems = carryOverTasks(items, next);
+        setDailyHistory((history) => ({ ...history, [next]: { date: next, tasks: nextItems, edibleTomatoes: dailyStatsForDate(dailyStats, next).edibleTomatoes, digestedTomatoes: dailyStatsForDate(dailyStats, next).digestedTomatoes, focusSessions: focusSessions[next] || [] } }));
+        return nextItems;
+      });
       const nextStats = dailyStatsForDate(dailyStats, next);
       setCompleted(nextStats.edibleTomatoes);
       setDigested(nextStats.digestedTomatoes);
