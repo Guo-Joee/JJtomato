@@ -153,13 +153,13 @@ export function buildTimelineTaskGroups({ history = {}, currentTasks = [], today
   const byId = new Map();
   Object.values(history).forEach((day) => {
     (day.tasks || []).forEach((task) => {
-      const item = normalizeTask(task, day.date);
-      byId.set(String(item.id), { ...item, timelineDate: item.plannedDate || day.date });
+      const row = flattenTaskTree(task, day.date)[0];
+      byId.set(String(row.id), { ...row, timelineDate: row.plannedDate || day.date });
     });
   });
   currentTasks.forEach((task) => {
-    const item = normalizeTask(task, today);
-    byId.set(String(item.id), { ...item, timelineDate: item.plannedDate || today });
+    const row = flattenTaskTree(task, today)[0];
+    byId.set(String(row.id), { ...row, timelineDate: row.plannedDate || today });
   });
   return days.map((date) => ({ date, tasks: [...byId.values()].filter((task) => task.timelineDate === date) }));
 }

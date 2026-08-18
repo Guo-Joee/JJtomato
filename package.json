@@ -1,6 +1,6 @@
 {
   "name": "jjtomato",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "JJtomato：番茄 × ins 玻璃风桌面番茄钟",
   "author": "Guo-Joee",
   "main": "electron/main.cjs",

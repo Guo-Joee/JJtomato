@@ -90,6 +90,18 @@ test('主任务所需番茄按未完成子任务汇总，并受库存限制', ()
   assert.equal(consumeTaskTomatoes({ pomodoros: amount }, 2).ok, true);
 });
 
+test('Todo 时间轴分组保留主任务的 children 嵌套以渲染子任务', () => {
+  const groups = buildTimelineTaskGroups({
+    history: {},
+    currentTasks: [{ id: 1, text: '主任务', done: false, pomodoros: 2, plannedDate: '2026-08-18', subtasks: [{ id: 2, text: '子任务', done: false, pomodoros: 1, plannedDate: '2026-08-18' }] }],
+    today: '2026-08-18',
+    days: ['2026-08-18'],
+  });
+  const task = groups[0].tasks[0];
+  assert.ok(Array.isArray(task.children));
+  assert.equal(task.children[0][0].text, '子任务');
+});
+
 test('8/17 未完成任务顺延后出现在 8/18，历史快照不会覆盖当前顺延日期', () => {
   const pending = carryOverTasks([{ id: 17, text: '8/17 未完成', done: false, pomodoros: 1, plannedDate: '2026-08-17', addedDate: '2026-08-17', subtasks: [] }], '2026-08-18');
   const groups = buildTimelineTaskGroups({ history: { '2026-08-17': { date: '2026-08-17', tasks: [{ id: 17, text: '8/17 未完成', done: false, pomodoros: 1, plannedDate: '2026-08-17', subtasks: [] }] } }, currentTasks: pending, today: '2026-08-18', days: ['2026-08-17', '2026-08-18'] });
