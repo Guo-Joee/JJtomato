@@ -90,6 +90,12 @@ test('主任务所需番茄按未完成子任务汇总，并受库存限制', ()
   assert.equal(consumeTaskTomatoes({ pomodoros: amount }, 2).ok, true);
 });
 
+test('每日统计按日期独立，新日期没有记录时从零开始', () => {
+  const stats = { '2026-08-17': { edibleTomatoes: 4, digestedTomatoes: 2 } };
+  assert.deepEqual(stats['2026-08-17'], { edibleTomatoes: 4, digestedTomatoes: 2 });
+  assert.deepEqual(stats['2026-08-18'] || { edibleTomatoes: 0, digestedTomatoes: 0 }, { edibleTomatoes: 0, digestedTomatoes: 0 });
+});
+
 test('0 番茄任务可以直接完成且不消耗库存', () => {
   assert.deepEqual(consumeTaskTomatoes({ pomodoros: 0 }, 0), { ok: true, amount: 0, remaining: 0 });
 });

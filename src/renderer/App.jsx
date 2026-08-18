@@ -443,11 +443,14 @@ export default function App() {
   const [remaining, setRemaining] = useState(MODES.focus.seconds);
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [completed, setCompleted] = useState(() => loadJson(localStorage, 'tomato.completed', 0));
-  const [digested, setDigested] = useState(() => loadJson(localStorage, 'tomato.digested', 0));
+  const initialDailyStats = loadJson(localStorage, 'tomato.dailyStats', {});
+  const initialTodayStats = initialDailyStats[localDateKey()] || { edibleTomatoes: 0, digestedTomatoes: 0 };
+  const [completed, setCompleted] = useState(initialTodayStats.edibleTomatoes);
+  const [digested, setDigested] = useState(initialTodayStats.digestedTomatoes);
   const [tasks, setTasks] = useState(() => carryOverTasks(loadJson(localStorage, 'tomato.tasks', INITIAL_TASKS), localDateKey()));
   const [focusSessions, setFocusSessions] = useState(() => loadJson(localStorage, 'tomato.focusSessions', {}));
   const [dailyHistory, setDailyHistory] = useState(() => loadJson(localStorage, 'tomato.dailyTodo', {}));
+  const [dailyStats, setDailyStats] = useState(initialDailyStats);
   const [focusStartedAt, setFocusStartedAt] = useState(null);
   const [notice, setNotice] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -464,10 +467,13 @@ export default function App() {
       const next = localDateKey();
       if (next === today) return;
       setTasks((items) => carryOverTasks(items, next));
+      const nextStats = dailyStats[next] || { edibleTomatoes: 0, digestedTomatoes: 0 };
+      setCompleted(nextStats.edibleTomatoes);
+      setDigested(nextStats.digestedTomatoes);
       setToday(next);
     }, 30_000);
     return () => window.clearInterval(interval);
-  }, [today]);
+  }, [today, dailyStats]);
 
   const focusSecondsToday = (focusSessions[today] || []).reduce((sum, session) => sum + (Number(session.actualSeconds) || 0), 0);
   const todayFocusLabel = formatDuration(focusSecondsToday);
@@ -654,8 +660,12 @@ export default function App() {
     if (!isMini) window.tomatoDesktop?.sendTimerState(statePayload);
   }, [isMini, statePayload]);
   useEffect(() => { saveJson(localStorage, 'tomato.tasks', tasks); }, [tasks]);
-  useEffect(() => { saveJson(localStorage, 'tomato.completed', completed); }, [completed]);
+  useEffect(() => {
+    setDailyStats((all) => ({ ...all, [today]: { edibleTomatoes: completed, digestedTomatoes: digested } }));
+    saveJson(localStorage, 'tomato.completed', completed);
+  }, [completed, digested, today]);
   useEffect(() => { saveJson(localStorage, 'tomato.digested', digested); }, [digested]);
+  useEffect(() => { saveJson(localStorage, 'tomato.dailyStats', dailyStats); }, [dailyStats]);
   useEffect(() => { saveJson(localStorage, 'tomato.focusSessions', focusSessions); }, [focusSessions]);
   useEffect(() => {
     setDailyHistory((history) => ({
