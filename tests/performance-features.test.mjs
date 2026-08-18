@@ -197,6 +197,12 @@ test('历史 Todo 支持双击编辑主任务和子任务名称', () => {
   assert.match(app, /updateHistoricalTask/);
 });
 
+test('Todo 总览顺延任务显示创建时间和顺延次数', () => {
+  assert.match(app, /创建于/);
+  assert.match(app, /顺延 \$\{task\.carryCount\} 次/);
+  assert.match(app, /顺延 \$\{child\.carryCount\} 次/);
+});
+
 test('任务复选框使用 flex 居中并且 Todo 子任务使用父子层级样式', () => {
   assert.match(css, /\.check\s*\{[^}]*display:\s*inline-flex/s);
   assert.match(css, /\.subtask-check\s*\{[^}]*justify-content:\s*center/s);
