@@ -193,6 +193,12 @@ test('Todo 总览点击历史日期任务时使用日期参数更新对应历史
   assert.match(app, /onToggleTask\(child, task\.id, group\.date\)/);
 });
 
+test('历史 Todo 支持双击编辑主任务和子任务名称', () => {
+  assert.match(app, /timeline-edit-input/);
+  assert.match(app, /onDoubleClick/);
+  assert.match(app, /updateHistoricalTask/);
+});
+
 test('任务复选框使用 flex 居中并且 Todo 子任务使用父子层级样式', () => {
   assert.match(css, /\.check\s*\{[^}]*display:\s*inline-flex/s);
   assert.match(css, /\.subtask-check\s*\{[^}]*justify-content:\s*center/s);

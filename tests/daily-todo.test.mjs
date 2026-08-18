@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, consumeTaskTomatoes, dailyStatsForDate, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate, addSubtask, completeTaskTree, carryOverTaskTree, summarizeTaskTree, flattenTaskTree, formatDuration, summarizeDay, toggleSubtaskCompletion } from '../src/core/daily-todo.mjs';
+import { buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, consumeTaskTomatoes, dailyStatsForDate, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate, addSubtask, completeTaskTree, carryOverTaskTree, summarizeTaskTree, flattenTaskTree, formatDuration, summarizeDay, toggleSubtaskCompletion, updateTaskInTree } from '../src/core/daily-todo.mjs';
 
 test('主任务树可以展开为带主任务名称的历史回顾记录', () => {
   const rows = flattenTaskTree({ id: 1, text: '复习通信协议', subtasks: [{ id: 2, text: 'IIC', done: true, parentId: 1 }] }, '2026-08-18');
@@ -88,6 +88,13 @@ test('主任务所需番茄按未完成子任务汇总，并受库存限制', ()
   assert.equal(amount, 2);
   assert.equal(consumeTaskTomatoes({ pomodoros: amount }, 0).ok, false);
   assert.equal(consumeTaskTomatoes({ pomodoros: amount }, 2).ok, true);
+});
+
+test('历史 Todo 可以通过 ID 更新嵌套主任务或子任务名称和状态', () => {
+  const tasks = [{ id: 1, text: '主任务', done: false, subtasks: [{ id: 2, text: '子任务', done: false }] }];
+  const renamed = updateTaskInTree(tasks, 2, (task) => ({ ...task, text: '改名后的子任务', done: true }));
+  assert.equal(renamed[0].subtasks[0].text, '改名后的子任务');
+  assert.equal(renamed[0].subtasks[0].done, true);
 });
 
 test('每日统计按日期独立，新日期没有记录时从零开始', () => {

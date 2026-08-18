@@ -300,9 +300,11 @@ function TodoOverview({ tasks, history, today, range, anchorDate, selectedDates,
   );
 }
 
-function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions, range, anchorDate, selectedDates, onRangeChange, onAnchorChange, onSelectDate, onToggleTask, onExport }) {
+function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions, range, anchorDate, selectedDates, onRangeChange, onAnchorChange, onSelectDate, onToggleTask, onUpdateHistoricalTask, onExport }) {
+  const [editing, setEditing] = useState(null);
   const [collapsedDays, setCollapsedDays] = useState({});
-  const [collapsedParents, setCollapsedParents] = useState({});
+  const beginEdit = (task, date) => { setEditing(`${date}:${task.id}`); setDraftText(task.text); };
+  const saveEdit = (task, date) => { const text = draftText.trim(); if (text && text !== task.text) onUpdateHistoricalTask(date, task.id, { text }); setEditing(null); };
   const days = daysForRange(range, anchorDate);
   const rootsById = new Map();
   Object.values(history || {}).forEach((day) => taskRootsForDate(day.tasks || [], day.date).forEach((root) => rootsById.set(String(root.id), { ...root, timelineDate: root.date })));
@@ -343,13 +345,13 @@ function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions
                 <article className={`timeline-task-group ${task.done ? 'done' : ''}`} key={`${task.id}:${group.date}`}>
                   <div className="timeline-parent">
                     <button className="timeline-check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task, null, group.date)}>{task.done && <Check size={13} />}</button>
-                    <div className="timeline-task-main"><strong>{task.text}</strong><small>{task.done ? '已完成' : '待完成'} · {children.filter((child) => child.done).length}/{children.length} 个子任务</small>{tomatoDots(summarizeTaskTree(task).pomodoros)}</div>
+                    <div className="timeline-task-main">{editing === `${group.date}:${task.id}` ? <input className="timeline-edit-input" autoFocus value={draftText} onChange={(e) => setDraftText(e.target.value)} onBlur={() => saveEdit(task, group.date)} onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(task, group.date); if (e.key === 'Escape') setEditing(null); }} /> : <strong onDoubleClick={() => beginEdit(task, group.date)} title="双击编辑任务名称">{task.text}</strong>}<small>{task.done ? '已完成' : '待完成'} · {children.filter((child) => child.done).length}/{children.length} 个子任务</small>{tomatoDots(summarizeTaskTree(task).pomodoros)}</div>
                     {children.length > 0 && <button className="parent-collapse" aria-label={collapsed ? '展开子任务' : '折叠子任务'} onClick={() => setCollapsedParents((state) => ({ ...state, [task.id]: !state[task.id] }))}>{collapsed ? '展开' : '折叠'}</button>}
                   </div>
                   {!collapsed && children.length > 0 && <div className="timeline-children">
                     {children.map((child) => <div className={`timeline-child ${child.done ? 'done' : ''}`} key={child.id}>
                       <button className="timeline-check" aria-label={child.done ? '取消完成子任务' : '完成子任务'} onClick={() => onToggleTask(child, task.id, group.date)}>{child.done && <Check size={12} />}</button>
-                      <div className="timeline-task-main"><strong>{child.text}</strong><small>所属主任务：{task.text} · {child.done ? '已完成' : '待完成'}</small>{tomatoDots(child.pomodoros)}</div>
+                      <div className="timeline-task-main">{editing === `${group.date}:${child.id}` ? <input className="timeline-edit-input" autoFocus value={draftText} onChange={(e) => setDraftText(e.target.value)} onBlur={() => saveEdit(child, group.date)} onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(child, group.date); if (e.key === 'Escape') setEditing(null); }} /> : <strong onDoubleClick={() => beginEdit(child, group.date)} title="双击编辑任务名称">{child.text}</strong>}<small>所属主任务：{task.text} · {child.done ? '已完成' : '待完成'}</small>{tomatoDots(child.pomodoros)}</div>
                     </div>)}
                   </div>}
                 </article>
@@ -601,6 +603,14 @@ export default function App() {
     window.setTimeout(() => setNotice(''), 2200);
   };
 
+  const updateHistoricalTask = (date, targetId, patch) => {
+    setDailyHistory((history) => {
+      const day = history[date];
+      if (!day) return history;
+      return { ...history, [date]: { ...day, tasks: updateTaskInTree(day.tasks || [], targetId, (task) => ({ ...task, ...patch })) } };
+    });
+  };
+
   const exportTodayMarkdown = () => {
     const date = today;
     const markdown = buildDailyTodoMarkdown({ date, tasks, edibleTomatoes: completed, digestedTomatoes: digested });
@@ -732,7 +742,7 @@ export default function App() {
       </div>
       {view === 'todo' ? (
         <main className="todo-page">
-          <VerticalTodoOverview tasks={tasks} history={dailyHistory} dailyStats={dailyStats} today={today} focusSessions={focusSessions} range={todoRange} anchorDate={todoAnchor} selectedDates={selectedDates} onRangeChange={changeTodoRange} onAnchorChange={moveTodoAnchor} onSelectDate={setSelectedDates} onToggleTask={toggleTask} onExport={exportSelectedMarkdown} />
+          <VerticalTodoOverview tasks={tasks} history={dailyHistory} dailyStats={dailyStats} today={today} focusSessions={focusSessions} range={todoRange} anchorDate={todoAnchor} selectedDates={selectedDates} onRangeChange={changeTodoRange} onAnchorChange={moveTodoAnchor} onSelectDate={setSelectedDates} onToggleTask={toggleTask} onUpdateHistoricalTask={updateHistoricalTask} onExport={exportSelectedMarkdown} />
         </main>
       ) : (
         <main className="dashboard">

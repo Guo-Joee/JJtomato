@@ -294,6 +294,7 @@ kbd { padding: 3px 7px; border-radius: 7px; background: rgba(255,255,255,.45); b
 .timeline-task.done { border-color: rgba(126,157,122,.24); background: rgba(234,244,230,.48); }
 .timeline-check { width: 23px; height: 23px; padding: 0; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(126,157,122,.38); border-radius: 8px; color: #fff; background: rgba(255,255,255,.45); line-height: 0; }
 .timeline-task.done .timeline-check { background: var(--leaf); }
+.timeline-edit-input { width: 100%; min-width: 0; height: 26px; padding: 0 7px; border: 1px solid rgba(222,118,104,.35); border-radius: 7px; color: var(--ink); background: rgba(255,255,255,.65); outline: none; font-size: 11px; }
 .timeline-task-main { min-width: 0; flex: 1; }
 .timeline-task-main > strong { display: block; overflow: hidden; color: var(--ink); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .timeline-task.done .timeline-task-main > strong { color: #71886d; text-decoration: line-through; }

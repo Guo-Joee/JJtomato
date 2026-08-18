@@ -141,6 +141,14 @@ export function consumeTaskTomatoes(task, available) {
   return { ok: true, amount, remaining: stock - amount };
 }
 
+export function updateTaskInTree(tasks, targetId, updater) {
+  return tasks.map((task) => {
+    if (task.id === targetId) return updater(normalizeTask(task));
+    if (Array.isArray(task.subtasks) && task.subtasks.length) return { ...task, subtasks: updateTaskInTree(task.subtasks, targetId, updater) };
+    return task;
+  });
+}
+
 export function buildDailyTodoMarkdown({ date, tasks = [], edibleTomatoes = 0, digestedTomatoes = 0 }) {
   const completedTasks = tasks.filter((task) => task.done);
   const pendingTasks = tasks.filter((task) => !task.done);
