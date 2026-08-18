@@ -239,6 +239,11 @@ test('Todo 总览切换时声明主任务折叠状态，避免渲染异常', () 
   assert.match(app, /const \[collapsedParents, setCollapsedParents\] = useState\(\{\}\)/);
 });
 
+test('主窗口推送带 deadlineEpoch，小窗基于同一 deadline 自主计算倒计时', () => {
+  assert.match(app, /deadlineEpoch/);
+  assert.match(app, /miniDeadlineRef/);
+});
+
 test('长休小窗使用与其他模式一致的填色杯子图案', () => {
   assert.match(app, /className="break-mark coffee-mark"/);
   assert.match(app, /<i \/><b \/><em \/>/);

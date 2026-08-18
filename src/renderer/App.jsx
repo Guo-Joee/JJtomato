@@ -460,6 +460,7 @@ export default function App() {
   }));
   const [pendingDurationUpdate, setPendingDurationUpdate] = useState(false);
   const previousTodayRef = useRef(today);
+  const miniDeadlineRef = useRef(null);
   const timerRef = useRef(null);
   const deadlineRef = useRef(null);
 
@@ -483,7 +484,13 @@ export default function App() {
   const focusSecondsToday = (focusSessions[today] || []).reduce((sum, session) => sum + (Number(session.actualSeconds) || 0), 0);
   const todayFocusLabel = formatDuration(focusSecondsToday);
   const modeSeconds = durations[mode] * 60;
-  const statePayload = useMemo(() => ({ mode, remaining, running, total: modeSeconds }), [mode, remaining, running, modeSeconds]);
+  const statePayload = useMemo(() => ({
+    mode,
+    remaining,
+    running,
+    total: modeSeconds,
+    deadlineEpoch: running && deadlineRef.current != null ? Date.now() + remaining * 1000 : null,
+  }), [mode, remaining, running, modeSeconds]);
 
   const saveDurations = (nextDurations) => {
     setDurations(nextDurations);
@@ -719,8 +726,14 @@ export default function App() {
     const applyMiniState = (state) => {
       if (!active || !state) return;
       setMode(state.mode);
-      setRemaining(state.remaining);
       setRunning(state.running);
+      if (state.running && state.deadlineEpoch) {
+        miniDeadlineRef.current = state.deadlineEpoch;
+        setRemaining(Math.max(0, Math.round((state.deadlineEpoch - Date.now()) / 1000)));
+      } else {
+        miniDeadlineRef.current = null;
+        setRemaining(state.remaining);
+      }
     };
     const unsubscribe = window.tomatoDesktop?.onMiniState(applyMiniState);
     window.tomatoDesktop?.getTimerState().then(applyMiniState).catch(() => {});
@@ -729,6 +742,16 @@ export default function App() {
       unsubscribe?.();
     };
   }, [isMini]);
+
+  useEffect(() => {
+    if (!isMini || !running) return undefined;
+    const intervalId = window.setInterval(() => {
+      if (miniDeadlineRef.current == null) return;
+      const seconds = Math.max(0, Math.round((miniDeadlineRef.current - Date.now()) / 1000));
+      setRemaining((value) => Math.min(value, seconds));
+    }, 250);
+    return () => window.clearInterval(intervalId);
+  }, [isMini, running]);
 
   if (isMini) return <MiniTimer mode={mode} remaining={remaining} running={running} />;
 
