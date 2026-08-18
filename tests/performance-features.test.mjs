@@ -108,7 +108,7 @@ test('专注支持暂停后继续，任务番茄数量可编辑', () => {
 
 test('任务完成会按番茄数消化库存，并支持今日 Todo Markdown 导出', () => {
   assert.match(app, /consumeTaskTomatoes/);
-  assert.match(dailyTodo, /今日食用番茄已经被消化啦/);
+  assert.match(dailyTodo, /可消化番茄不足，请先完成专注获得番茄/);
   assert.match(app, /tomato\.digested/);
   assert.match(app, /tomato\.dailyTodo/);
   assert.match(app, /buildDailyTodoMarkdown/);
@@ -147,10 +147,65 @@ test('Todo 总览使用竖向时间轴而不是日期表格', () => {
   assert.match(css, /\.timeline-task/);
 });
 
-test('Todo 总览按任务 ID 合并当前任务与历史快照，避免重复显示', () => {
-  assert.match(app, /const records = new Map\(\)/);
-  assert.match(app, /records\.set\(String\(item\.id\)/);
-  assert.match(app, /\[\.\.\.records\.values\(\)\]/);
+test('Todo 总览按主任务 ID 合并当前任务与历史快照，避免重复显示', () => {
+  assert.match(app, /const rootsById = new Map\(\)/);
+  assert.match(app, /rootsById\.set\(String\(root\.id\)/);
+  assert.match(app, /\[\.\.\.rootsById\.values\(\)\]/);
+});
+
+test('子任务通过右键主任务菜单创建，不显示常驻输入框', () => {
+  assert.match(app, /onContextMenu/);
+  assert.match(app, /创建子任务/);
+  assert.match(app, /context-menu/);
+  assert.match(app, /subtask-editor/);
+  assert.doesNotMatch(app, /className="subtask-add"/);
+  assert.match(css, /\.context-menu/);
+  assert.match(css, /\.subtask-editor/);
+});
+
+test('Todo 时间轴包含子任务及所属主任务提示', () => {
+  assert.match(app, /taskRootsForDate/);
+  assert.match(app, /timeline-children/);
+  assert.match(app, /所属主任务：/);
+});
+
+test('每日专注时长保存到 focusSessions 并显示在底部和日期时间轴', () => {
+  assert.match(app, /tomato\.focusSessions/);
+  assert.match(app, /今日专注/);
+  assert.match(app, /summarizeDay/);
+  assert.match(app, /focusSessions=\{focusSessions\}/);
+});
+
+test('任务复选框使用 flex 居中并且 Todo 子任务使用父子层级样式', () => {
+  assert.match(css, /\.check\s*\{[^}]*display:\s*inline-flex/s);
+  assert.match(css, /\.subtask-check\s*\{[^}]*justify-content:\s*center/s);
+  assert.match(css, /\.timeline-task-content\.is-subtask/);
+  assert.match(css, /border-left:\s*2px/);
+});
+
+test('主任务和 Todo 日期组支持折叠子任务', () => {
+  assert.match(app, /collapse-toggle/);
+  assert.match(app, /timeline-collapse/);
+  assert.match(app, /collapsedDays/);
+});
+
+test('Todo 时间轴按主任务分组渲染并由主任务折叠子任务', () => {
+  assert.match(app, /timeline-task-group/);
+  assert.match(app, /timeline-parent/);
+  assert.match(app, /timeline-children/);
+  assert.match(app, /collapsedParents/);
+});
+
+test('计时设置保存后空闲计时器立即更新，运行中显示下次生效提示', () => {
+  assert.match(app, /onSave/);
+  assert.match(app, /保存后已更新当前倒计时/);
+  assert.match(app, /请结束本次计时/);
+  assert.match(app, /pendingDurationUpdate/);
+});
+
+test('专注台主任务完成状态由 task-group 驱动绿色对勾和删除线', () => {
+  assert.match(css, /\.task-group\.done\s*>\s*\.task\s*>\s*\.check\s*\{/);
+  assert.match(css, /\.task-group\.done\s+\.task\s*>\s*span/);
 });
 
 test('长休小窗使用与其他模式一致的填色杯子图案', () => {

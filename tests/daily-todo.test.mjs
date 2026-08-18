@@ -1,6 +1,69 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, consumeTaskTomatoes, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate } from '../src/core/daily-todo.mjs';
+import { buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, consumeTaskTomatoes, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate, addSubtask, completeTaskTree, carryOverTaskTree, summarizeTaskTree, flattenTaskTree, formatDuration, summarizeDay, toggleSubtaskCompletion } from '../src/core/daily-todo.mjs';
+
+test('主任务树可以展开为带主任务名称的历史回顾记录', () => {
+  const rows = flattenTaskTree({ id: 1, text: '复习通信协议', subtasks: [{ id: 2, text: 'IIC', done: true, parentId: 1 }] }, '2026-08-18');
+  assert.equal(rows[0].parentText, '复习通信协议');
+  assert.equal(rows[0].date, '2026-08-18');
+  assert.equal(rows[0].children[0][0].text, 'IIC');
+});
+
+test('每日统计按实际专注秒数累计并格式化', () => {
+  const summary = summarizeDay({ focusSessions: [{ actualSeconds: 900 }, { actualSeconds: 1800 }], tasks: [{ done: true, pomodoros: 2, started: true }] });
+  assert.equal(summary.focusSeconds, 2700);
+  assert.equal(summary.label, '45 分钟');
+  assert.equal(formatDuration(3660), '1 小时 1 分钟');
+});
+
+test('子任务完成状态按父任务定位更新，主任务可直接完成', () => {
+  const task = { id: 1, text: '主任务', pomodoros: 0, done: false, subtasks: [{ id: 2, text: '子任务', pomodoros: 1, done: false }] };
+  const done = completeTaskTree(task);
+  assert.equal(done.done, true);
+  assert.equal(done.subtasks[0].done, true);
+});
+
+test('最后一个子任务完成后主任务自动完成，取消子任务时主任务恢复未完成', () => {
+  const task = { id: 1, text: '主任务', done: false, subtasks: [
+    { id: 2, text: 'IIC', done: true, pomodoros: 1 },
+    { id: 3, text: 'SPI', done: false, pomodoros: 1 },
+  ] };
+  const complete = toggleSubtaskCompletion(task, 3);
+  assert.equal(complete.done, true);
+  assert.ok(complete.subtasks.every((item) => item.done));
+  const reopen = toggleSubtaskCompletion(complete, 2);
+  assert.equal(reopen.done, false);
+  assert.equal(reopen.subtasks[0].done, false);
+});
+
+test('主任务可以创建子任务，并自动汇总子任务番茄数', () => {
+  const task = addSubtask({ id: 1, text: '复习通信协议', pomodoros: 0, subtasks: [] }, { id: 2, text: 'IIC', pomodoros: 1 });
+  const next = addSubtask(task, { id: 3, text: 'SPI', pomodoros: 2 });
+  assert.equal(next.subtasks.length, 2);
+  assert.equal(summarizeTaskTree(next).pomodoros, 3);
+});
+
+test('完成主任务会联动完成未完成子任务并消化全部番茄', () => {
+  const task = { id: 1, text: '复习通信协议', done: false, subtasks: [
+    { id: 2, text: 'IIC', done: true, pomodoros: 1 },
+    { id: 3, text: 'SPI', done: false, pomodoros: 2 },
+  ] };
+  const completed = completeTaskTree(task);
+  assert.equal(completed.done, true);
+  assert.ok(completed.subtasks.every((subtask) => subtask.done));
+  assert.equal(summarizeTaskTree(completed).digested, 3);
+});
+
+test('顺延主任务时只顺延未完成子任务，已完成子任务保留原日期', () => {
+  const task = { id: 1, text: '复习通信协议', done: false, plannedDate: '2026-08-16', subtasks: [
+    { id: 2, text: 'IIC', done: true, plannedDate: '2026-08-16' },
+    { id: 3, text: 'SPI', done: false, plannedDate: '2026-08-16' },
+  ] };
+  const next = carryOverTaskTree(task, '2026-08-17');
+  assert.equal(next.plannedDate, '2026-08-17');
+  assert.equal(next.subtasks[0].plannedDate, '2026-08-16');
+  assert.equal(next.subtasks[1].plannedDate, '2026-08-17');
+});
 
 test('任务番茄数允许 0，并限制在 0 到 99', () => {
   assert.equal(normalizePomodoros(0), 0);
@@ -13,7 +76,18 @@ test('消化任务番茄：库存足够时扣除，不足时阻止完成', () =>
   assert.deepEqual(consumeTaskTomatoes({ pomodoros: 2 }, 3), { ok: true, amount: 2, remaining: 1 });
   const blocked = consumeTaskTomatoes({ pomodoros: 2 }, 1);
   assert.equal(blocked.ok, false);
-  assert.equal(blocked.message, '今日食用番茄已经被消化啦！');
+  assert.equal(blocked.message, '可消化番茄不足，请先完成专注获得番茄。');
+});
+
+test('主任务所需番茄按未完成子任务汇总，并受库存限制', () => {
+  const task = { subtasks: [
+    { done: true, pomodoros: 1 },
+    { done: false, pomodoros: 2 },
+  ] };
+  const amount = summarizeTaskTree(task).pomodoros - summarizeTaskTree(task).digested;
+  assert.equal(amount, 2);
+  assert.equal(consumeTaskTomatoes({ pomodoros: amount }, 0).ok, false);
+  assert.equal(consumeTaskTomatoes({ pomodoros: amount }, 2).ok, true);
 });
 
 test('0 番茄任务可以直接完成且不消耗库存', () => {

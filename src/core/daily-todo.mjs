@@ -41,6 +41,9 @@ export function normalizePomodoros(value, fallback = 0) {
 
 export function normalizeTask(task, today = localDateKey()) {
   const addedDate = task.addedDate || today;
+  const subtasks = Array.isArray(task.subtasks)
+    ? task.subtasks.map((subtask) => normalizeTask(subtask, task.plannedDate || today))
+    : [];
   return {
     ...task,
     addedDate,
@@ -48,20 +51,76 @@ export function normalizeTask(task, today = localDateKey()) {
     carryCount: Number.isFinite(task.carryCount) ? task.carryCount : 0,
     pomodoros: normalizePomodoros(task.pomodoros, 0),
     done: Boolean(task.done),
+    subtasks,
+  };
+}
+
+export function summarizeTaskTree(task) {
+  const subtasks = Array.isArray(task?.subtasks) ? task.subtasks : [];
+  if (!subtasks.length) {
+    const pomodoros = normalizePomodoros(task?.pomodoros);
+    return { pomodoros, eaten: task?.started ? pomodoros : 0, digested: task?.done ? pomodoros : 0 };
+  }
+  return subtasks.reduce((summary, subtask) => {
+    const next = summarizeTaskTree(subtask);
+    return { pomodoros: summary.pomodoros + next.pomodoros, eaten: summary.eaten + next.eaten, digested: summary.digested + next.digested };
+  }, { pomodoros: 0, eaten: 0, digested: 0 });
+}
+
+export function addSubtask(task, subtask) {
+  const parent = normalizeTask(task);
+  const child = normalizeTask({ ...subtask, parentId: parent.id, done: false }, parent.plannedDate);
+  return { ...parent, pomodoros: 0, subtasks: [...parent.subtasks, child] };
+}
+
+export function completeTaskTree(task) {
+  const normalized = normalizeTask(task);
+  return { ...normalized, done: true, subtasks: normalized.subtasks.map((subtask) => completeTaskTree(subtask)) };
+}
+
+export function toggleSubtaskCompletion(task, subtaskId) {
+  const normalized = normalizeTask(task);
+  const subtasks = normalized.subtasks.map((subtask) => subtask.id === subtaskId ? { ...subtask, done: !subtask.done } : subtask);
+  return { ...normalized, subtasks, done: subtasks.length > 0 && subtasks.every((subtask) => subtask.done) };
+}
+
+export function carryOverTaskTree(task, today = localDateKey()) {
+  const normalized = normalizeTask(task, today);
+  const next = normalized.done || normalized.plannedDate >= today
+    ? normalized
+    : { ...normalized, plannedDate: today, carriedFrom: normalized.plannedDate, carryCount: normalized.carryCount + 1 };
+  return {
+    ...next,
+    subtasks: next.subtasks.map((subtask) => subtask.done ? subtask : carryOverTaskTree(subtask, today)),
   };
 }
 
 export function carryOverTasks(tasks, today = localDateKey()) {
-  return tasks.map((raw) => {
-    const task = normalizeTask(raw, today);
-    if (task.done || task.plannedDate >= today) return task;
-    return {
-      ...task,
-      plannedDate: today,
-      carriedFrom: task.plannedDate,
-      carryCount: task.carryCount + 1,
-    };
-  });
+  return tasks.map((task) => carryOverTaskTree(task, today));
+}
+
+export function flattenTaskTree(task, date, parentText = null) {
+  const normalized = normalizeTask(task, date);
+  const rows = [{ ...normalized, date, parentText: parentText || (normalized.subtasks.length ? normalized.text : null), children: normalized.subtasks.map((subtask) => flattenTaskTree(subtask, date, normalized.text)) }];
+  return rows;
+}
+
+export function formatDuration(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours) return `${hours} 小时${minutes ? ` ${minutes} 分钟` : ''}`;
+  return `${minutes} 分钟`;
+}
+
+export function summarizeDay(day = {}) {
+  const focusSeconds = (day.focusSessions || []).reduce((sum, session) => sum + Math.max(0, Number(session.actualSeconds) || 0), 0);
+  return {
+    focusSeconds,
+    label: formatDuration(focusSeconds),
+    eaten: Number(day.edibleTomatoes) || 0,
+    digested: Number(day.digestedTomatoes) || 0,
+  };
 }
 
 export function consumeTaskTomatoes(task, available) {
@@ -69,7 +128,7 @@ export function consumeTaskTomatoes(task, available) {
   const stock = Math.max(0, Number(available) || 0);
   if (amount === 0) return { ok: true, amount: 0, remaining: stock };
   if (amount > stock) {
-    return { ok: false, amount, remaining: stock, message: '今日食用番茄已经被消化啦！' };
+    return { ok: false, amount, remaining: stock, message: '可消化番茄不足，请先完成专注获得番茄。' };
   }
   return { ok: true, amount, remaining: stock - amount };
 }

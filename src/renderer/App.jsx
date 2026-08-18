@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Check, Coffee, Download, ListTodo, Minus, Pause, Play, Plus, RotateCcw,
@@ -6,7 +7,7 @@ import {
 } from 'lucide-react';
 import { MODES, formatTime, nextMode, progressOf, remainingSecondsAt } from '../core/timer.mjs';
 import { loadJson, saveJson } from '../core/storage.mjs';
-import { buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, consumeTaskTomatoes, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, shiftDate } from '../core/daily-todo.mjs';
+import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, completeTaskTree, consumeTaskTomatoes, daysForRange, flattenTaskTree, formatDuration, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, shiftDate, summarizeDay, summarizeTaskTree, toggleSubtaskCompletion } from '../core/daily-todo.mjs';
 
 const VISUAL = {
   focus: {
@@ -33,8 +34,8 @@ const VISUAL = {
 };
 
 const INITIAL_TASKS = [
-  { id: 1, text: '完成今天最重要的一件事', done: false, pomodoros: 2 },
-  { id: 2, text: '整理会议记录', done: false, pomodoros: 1 },
+  { id: 1, text: '完成今天最重要的一件事', done: false, pomodoros: 2, subtasks: [] },
+  { id: 2, text: '整理会议记录', done: false, pomodoros: 1, subtasks: [] },
 ];
 
 function TomatoMark({ size = 30, mode = 'focus' }) {
@@ -138,48 +139,96 @@ function TimerHero({ mode, remaining, running, paused, onToggle, onReset, onSkip
   );
 }
 
+function taskRootsForDate(tasks, date) {
+  return tasks.map((task) => flattenTaskTree(task, date)[0]);
+}
+
+function TaskContextMenu({ menu, tasks, onClose, onAddSubtask, onToggleTask, onDeleteTask }) {
+  const task = tasks.find((item) => item.id === menu.taskId);
+  if (!task) return null;
+  const width = 160;
+  const height = 126;
+  const left = Math.min(menu.x, window.innerWidth - width - 8);
+  const top = Math.min(menu.y, window.innerHeight - height - 8);
+  return createPortal(
+    <>
+      <div className="context-backdrop" onMouseDown={onClose} onContextMenu={(event) => { event.preventDefault(); onClose(); }} />
+      <motion.div className="context-menu" style={{ left, top }} initial={{ opacity: 0, scale: .92, y: -4 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: .16, ease: [0.22, 1, 0.36, 1] }}>
+        <button onClick={() => { onAddSubtask(task); onClose(); }}><Plus size={14} /> 创建子任务</button>
+        <button onClick={() => { onToggleTask(task); onClose(); }}><Check size={14} /> {task.done ? '取消完成任务' : '完成任务'}</button>
+        <hr />
+        <button className="danger" onClick={() => { onDeleteTask(task); onClose(); }}><Trash2 size={14} /> 删除任务</button>
+      </motion.div>
+    </>,
+    document.body,
+  );
+}
+
 function TasksPanel({ tasks, setTasks, onToggleTask, notice, today }) {
   const [value, setValue] = useState('');
+  const [contextMenu, setContextMenu] = useState(null);
+  const [subtaskEditorId, setSubtaskEditorId] = useState(null);
+  const [subtaskDraft, setSubtaskDraft] = useState('');
+  const [collapsed, setCollapsed] = useState({});
   const add = () => {
     const text = value.trim();
     if (!text) return;
-    setTasks((items) => [...items, { id: Date.now(), text, done: false, pomodoros: 1, addedDate: today, plannedDate: today, carryCount: 0 }]);
+    setTasks((items) => [...items, { id: Date.now(), text, done: false, pomodoros: 1, subtasks: [], addedDate: today, plannedDate: today, carryCount: 0 }]);
     setValue('');
   };
-  const updatePomodoros = (id, value) => {
-    const next = normalizePomodoros(value, 0);
-    setTasks((items) => items.map((task) => task.id === id ? { ...task, pomodoros: next } : task));
+  const updatePomodoros = (id, value) => setTasks((items) => items.map((task) => task.id === id ? { ...task, pomodoros: normalizePomodoros(value, 0) } : task));
+  const openContextMenu = (task, event) => {
+    event.preventDefault();
+    setContextMenu({ taskId: task.id, x: event.clientX, y: event.clientY });
   };
+  const addChild = (task) => {
+    const text = subtaskDraft.trim();
+    if (!text) return;
+    setTasks((items) => items.map((item) => item.id === task.id ? addSubtask(item, { id: `${task.id}-${Date.now()}`, text, pomodoros: 1 }) : item));
+    setSubtaskDraft('');
+    setSubtaskEditorId(null);
+  };
+  const updateSubtask = (taskId, subtaskId, patch) => setTasks((items) => items.map((task) => task.id === taskId
+    ? { ...task, subtasks: task.subtasks.map((subtask) => subtask.id === subtaskId ? { ...subtask, ...patch } : subtask) }
+    : task));
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const close = () => setContextMenu(null);
+    const onKey = (event) => { if (event.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('blur', close);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('blur', close); };
+  }, [contextMenu]);
+  const renderSubtasks = (task) => task.subtasks?.length > 0 && (
+    <div className="subtask-group">
+      {task.subtasks.map((subtask) => (
+        <div className={`subtask ${subtask.done ? 'done' : ''}`} key={subtask.id}>
+          <button className="subtask-check" aria-label={subtask.done ? '取消完成子任务' : '完成子任务'} onClick={() => onToggleTask(subtask, task.id)}>{subtask.done && <Check size={12} />}</button>
+          <span>{subtask.text}</span>
+          <div className="pomodoro-editor"><TomatoMark size={13} /><input type="number" min="0" max="99" value={subtask.pomodoros} disabled={subtask.done} aria-label="子任务番茄数量" onChange={(e) => updateSubtask(task.id, subtask.id, { pomodoros: normalizePomodoros(e.target.value, 0) })} /></div>
+        </div>
+      ))}
+    </div>
+  );
   return (
     <section className="side-panel glass-panel">
-      <div className="panel-title">
-        <div><ListTodo size={17} /><strong>今日任务</strong></div>
-        <span>{tasks.filter((t) => t.done).length}/{tasks.length}</span>
-      </div>
-      <div className="add-task">
-        <input value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="今天最重要的一件事…" />
-        <button onClick={add} aria-label="添加任务"><Plus size={18} /></button>
-      </div>
-      <div className="task-list">
-        <AnimatePresence initial={false}>
-          {tasks.map((task) => (
-            <motion.div className={`task ${task.done ? 'done' : ''}`} key={task.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 16 }}>
-              <button className="check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task)}>
-                {task.done && <Check size={14} />}
-              </button>
-              <span>{task.text}</span>
-              <div className="pomodoro-editor" aria-label={`${task.text}需要的番茄数`}>
-                <TomatoMark size={15} />
-                <button type="button" aria-label="减少番茄数" disabled={task.done} onClick={() => updatePomodoros(task.id, task.pomodoros - 1)}>−</button>
-                <input type="number" min="0" max="99" value={task.pomodoros} disabled={task.done} aria-label="番茄数量" onChange={(e) => updatePomodoros(task.id, e.target.value)} />
-                <button type="button" aria-label="增加番茄数" disabled={task.done} onClick={() => updatePomodoros(task.id, task.pomodoros + 1)}>+</button>
-              </div>
-              <button className="delete" onClick={() => setTasks((list) => list.filter((t) => t.id !== task.id))}><Trash2 size={15} /></button>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+      <div className="panel-title"><div><ListTodo size={17} /><strong>今日任务</strong></div><span>{tasks.filter((t) => t.done).length}/{tasks.length}</span></div>
+      <div className="add-task"><input value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="今天最重要的一件事…" /><button onClick={add} aria-label="添加任务"><Plus size={18} /></button></div>
+      <div className="task-list"><AnimatePresence initial={false}>{tasks.map((task) => (
+        <motion.div className={`task-group ${task.done ? 'done' : ''}`} key={task.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 16 }}>
+          <div className="task" onContextMenu={(event) => openContextMenu(task, event)}><button className="check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task)}>{task.done && <Check size={14} />}</button><span>{task.text}<small>{task.subtasks?.length ? `${task.subtasks.filter((item) => item.done).length}/${task.subtasks.length} 个子任务` : ''}</small></span><div className="pomodoro-editor" aria-label={`${task.text}需要的番茄数`}><TomatoMark size={15} /><input type="number" min="0" max="99" value={summarizeTaskTree(task).pomodoros} disabled={task.done || task.subtasks?.length > 0} aria-label="番茄数量" readOnly={task.subtasks?.length > 0} onChange={(e) => updatePomodoros(task.id, e.target.value)} /></div><button className="delete" onClick={() => setTasks((list) => list.filter((t) => t.id !== task.id))}><Trash2 size={15} /></button></div>
+          {task.subtasks?.length > 0 && <button className="collapse-toggle" onClick={() => setCollapsed((state) => ({ ...state, [task.id]: !state[task.id] }))}>{collapsed[task.id] ? '展开子任务' : '折叠子任务'}</button>}
+          {!collapsed[task.id] && renderSubtasks(task)}
+          {subtaskEditorId === task.id && (
+            <div className="subtask-editor">
+              <input autoFocus value={subtaskDraft} onChange={(e) => setSubtaskDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addChild(task); if (e.key === 'Escape') { setSubtaskEditorId(null); setSubtaskDraft(''); } }} placeholder="输入子任务名称，回车添加" />
+              <button onClick={() => addChild(task)} aria-label="添加子任务"><Plus size={14} /></button>
+            </div>
+          )}
+        </motion.div>
+      ))}</AnimatePresence></div>
       {notice && <div className="task-notice" role="alert">{notice}</div>}
+      {contextMenu && <TaskContextMenu menu={contextMenu} tasks={tasks} onClose={() => setContextMenu(null)} onAddSubtask={() => setSubtaskEditorId(contextMenu.taskId)} onToggleTask={onToggleTask} onDeleteTask={(task) => setTasks((list) => list.filter((t) => t.id !== task.id))} />}
     </section>
   );
 }
@@ -251,20 +300,16 @@ function TodoOverview({ tasks, history, today, range, anchorDate, selectedDates,
   );
 }
 
-function VerticalTodoOverview({ tasks, history, today, range, anchorDate, selectedDates, onRangeChange, onAnchorChange, onSelectDate, onToggleTask, onExport }) {
+function VerticalTodoOverview({ tasks, history, today, focusSessions, range, anchorDate, selectedDates, onRangeChange, onAnchorChange, onSelectDate, onToggleTask, onExport }) {
+  const [collapsedDays, setCollapsedDays] = useState({});
+  const [collapsedParents, setCollapsedParents] = useState({});
   const days = daysForRange(range, anchorDate);
-  const records = new Map();
-  Object.values(history || {}).forEach((day) => (day.tasks || []).forEach((task) => {
-    const item = normalizeTask(task, day.date);
-    const timelineDate = item.plannedDate || day.date;
-    records.set(String(item.id), { ...item, timelineDate });
-  }));
-  tasks.forEach((task) => {
-    const item = normalizeTask(task, today);
-    records.set(String(item.id), { ...item, timelineDate: item.plannedDate });
-  });
-  const groups = days.map((date) => ({ date, tasks: [...records.values()].filter((task) => task.timelineDate === date) })).filter((group) => group.tasks.length || group.date === today || range === 'day');
+  const rootsById = new Map();
+  Object.values(history || {}).forEach((day) => taskRootsForDate(day.tasks || [], day.date).forEach((root) => rootsById.set(String(root.id), { ...root, timelineDate: root.date })));
+  taskRootsForDate(tasks, today).forEach((root) => rootsById.set(String(root.id), { ...root, timelineDate: root.date }));
+  const groups = days.map((date) => ({ date, tasks: [...rootsById.values()].filter((task) => task.timelineDate === date) })).filter((group) => group.tasks.length || group.date === today || range === 'day');
   const selected = new Set(selectedDates);
+  const selectedSummary = summarizeDay(history?.[anchorDate] || { focusSessions: focusSessions?.[anchorDate] || [] });
   const rangeLabel = range === 'month' ? anchorDate.slice(0, 7) : range === 'week' ? `${days[0]} ～ ${days.at(-1)}` : anchorDate;
   const toggleDate = (date) => onSelectDate(selected.has(date) ? selectedDates.filter((item) => item !== date) : [...selectedDates, date]);
   const tomatoDots = (amount) => {
@@ -283,20 +328,33 @@ function VerticalTodoOverview({ tasks, history, today, range, anchorDate, select
         <div className="vertical-date-nav"><button aria-label="上一个日期范围" onClick={() => onAnchorChange(-1)}>‹</button><strong>{rangeLabel}</strong><button aria-label="下一个日期范围" onClick={() => onAnchorChange(1)}>›</button><button className="today-jump" onClick={() => onRangeChange(range, today)}>今天</button></div>
       </div>
       <div className="vertical-export-row"><span>导出日期</span><div>{days.map((day) => <label key={day}><input type="checkbox" checked={selected.has(day)} onChange={() => toggleDate(day)} /><b>{day.slice(5).replace('-', '/')}</b></label>)}</div></div>
-      <div className="vertical-summary"><span><b>{tasks.length}</b>任务</span><span><b>{tasks.filter((task) => task.done).length}</b>完成</span><span><b>{tasks.filter((task) => !task.done).length}</b>待继续</span></div>
+      <div className="vertical-summary"><span><b>{tasks.length}</b>任务</span><span><b>{tasks.filter((task) => task.done).length}</b>完成</span><span><b>{tasks.filter((task) => !task.done).length}</b>待继续</span><span className="focus-total"><b>{selectedSummary.label}</b>专注</span><span><b>{selectedSummary.eaten}</b>已食用</span><span><b>{selectedSummary.digested}</b>已消化</span></div>
       <div className="vertical-timeline">
         {groups.map((group) => (
           <section className={`timeline-day ${group.date === today ? 'today' : ''}`} key={group.date}>
             <div className="timeline-node" />
-            <header><strong>{group.date.slice(5).replace('-', '/')}</strong><span>{group.date === today ? '今天' : new Date(`${group.date}T12:00:00`).toLocaleDateString('zh-CN', { weekday: 'short' })}</span></header>
-            <div className="timeline-items">
-              {group.tasks.length === 0 ? <div className="timeline-empty">今天还没有任务</div> : group.tasks.map((task) => (
-                <article className={`timeline-task ${task.done ? 'done' : ''}`} key={`${task.id}:${group.date}`}>
-                  <button className="timeline-check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task)}>{task.done && <Check size={13} />}</button>
-                  <div className="timeline-task-main"><strong>{task.text}</strong><small>{task.done ? '已完成' : '待完成'} · 添加于 {task.addedDate}{task.carryCount ? ` · 顺延 ${task.carryCount} 次` : ''}</small>{tomatoDots(task.pomodoros)}</div>
+            <header><strong>{group.date.slice(5).replace('-', '/')}</strong><span>{group.date === today ? '今天' : new Date(`${group.date}T12:00:00`).toLocaleDateString('zh-CN', { weekday: 'short' })} · 专注 {summarizeDay(history?.[group.date] || { focusSessions: focusSessions?.[group.date] || [] }).label}</span></header>
+            <button className="timeline-collapse" onClick={() => setCollapsedDays((state) => ({ ...state, [group.date]: !state[group.date] }))}>{collapsedDays[group.date] ? '展开任务' : '折叠任务'}</button>
+            {!collapsedDays[group.date] && <div className="timeline-items">
+              {group.tasks.length === 0 ? <div className="timeline-empty">今天还没有任务</div> : group.tasks.map((task) => {
+                const children = (task.children || []).map((branch) => branch[0]);
+                const collapsed = collapsedParents[task.id];
+                return (
+                <article className={`timeline-task-group ${task.done ? 'done' : ''}`} key={`${task.id}:${group.date}`}>
+                  <div className="timeline-parent">
+                    <button className="timeline-check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task)}>{task.done && <Check size={13} />}</button>
+                    <div className="timeline-task-main"><strong>{task.text}</strong><small>{task.done ? '已完成' : '待完成'} · {children.filter((child) => child.done).length}/{children.length} 个子任务</small>{tomatoDots(summarizeTaskTree(task).pomodoros)}</div>
+                    {children.length > 0 && <button className="parent-collapse" aria-label={collapsed ? '展开子任务' : '折叠子任务'} onClick={() => setCollapsedParents((state) => ({ ...state, [task.id]: !state[task.id] }))}>{collapsed ? '展开' : '折叠'}</button>}
+                  </div>
+                  {!collapsed && children.length > 0 && <div className="timeline-children">
+                    {children.map((child) => <div className={`timeline-child ${child.done ? 'done' : ''}`} key={child.id}>
+                      <button className="timeline-check" aria-label={child.done ? '取消完成子任务' : '完成子任务'} onClick={() => onToggleTask(child, task.id)}>{child.done && <Check size={12} />}</button>
+                      <div className="timeline-task-main"><strong>{child.text}</strong><small>所属主任务：{task.text} · {child.done ? '已完成' : '待完成'}</small>{tomatoDots(child.pomodoros)}</div>
+                    </div>)}
+                  </div>}
                 </article>
-              ))}
-            </div>
+              );})}
+            </div>}
           </section>
         ))}
         {!groups.length && <div className="timeline-empty all-empty">这个范围还没有任务</div>}
@@ -305,7 +363,10 @@ function VerticalTodoOverview({ tasks, history, today, range, anchorDate, select
   );
 }
 
-function SettingsSheet({ open, onClose, durations, setDurations, opacity, setOpacity }) {
+function SettingsSheet({ open, onClose, durations, opacity, setOpacity, onSave, running }) {
+  const [draft, setDraft] = useState(durations);
+  useEffect(() => { if (open) setDraft(durations); }, [open, durations]);
+  const save = () => onSave(draft);
   return (
     <AnimatePresence>
       {open && (
@@ -319,15 +380,15 @@ function SettingsSheet({ open, onClose, durations, setDurations, opacity, setOpa
             ].map(([key, label, min, max]) => (
               <label className="setting-row" key={key}>
                 <span>{label}<small>分钟</small></span>
-                <input type="number" min={min} max={max} value={durations[key]} onChange={(e) => setDurations((d) => ({ ...d, [key]: Number(e.target.value) }))} />
+                <input type="number" min={min} max={max} value={draft[key]} onChange={(e) => setDraft((d) => ({ ...d, [key]: Number(e.target.value) }))} />
               </label>
             ))}
             <label className="setting-row opacity-row">
               <span>窗口透明度<small>{Math.round(opacity * 100)}%</small></span>
               <input className="opacity-slider" type="range" min="65" max="100" value={Math.round(opacity * 100)} onChange={(e) => setOpacity(Number(e.target.value) / 100)} />
             </label>
-            <div className="sheet-note">更改将在下次切换阶段时生效。</div>
-            <button className="sheet-save" onClick={onClose}>保存设置</button>
+            <div className="sheet-note">{running ? '请结束本次计时，保存的时间将在下次倒计时自动生效。' : '保存后已更新当前倒计时。'}</div>
+            <button className="sheet-save" onClick={save}>保存设置</button>
           </motion.aside>
         </motion.div>
       )}
@@ -385,13 +446,16 @@ export default function App() {
   const [completed, setCompleted] = useState(() => loadJson(localStorage, 'tomato.completed', 0));
   const [digested, setDigested] = useState(() => loadJson(localStorage, 'tomato.digested', 0));
   const [tasks, setTasks] = useState(() => carryOverTasks(loadJson(localStorage, 'tomato.tasks', INITIAL_TASKS), localDateKey()));
+  const [focusSessions, setFocusSessions] = useState(() => loadJson(localStorage, 'tomato.focusSessions', {}));
   const [dailyHistory, setDailyHistory] = useState(() => loadJson(localStorage, 'tomato.dailyTodo', {}));
+  const [focusStartedAt, setFocusStartedAt] = useState(null);
   const [notice, setNotice] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [opacity, setOpacity] = useState(() => loadJson(localStorage, 'tomato.opacity', 0.92));
   const [durations, setDurations] = useState(() => loadJson(localStorage, 'tomato.durations', {
     focus: 25, shortBreak: 5, longBreak: 15,
   }));
+  const [pendingDurationUpdate, setPendingDurationUpdate] = useState(false);
   const timerRef = useRef(null);
   const deadlineRef = useRef(null);
 
@@ -405,8 +469,24 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [today]);
 
+  const focusSecondsToday = (focusSessions[today] || []).reduce((sum, session) => sum + (Number(session.actualSeconds) || 0), 0);
+  const todayFocusLabel = formatDuration(focusSecondsToday);
   const modeSeconds = durations[mode] * 60;
   const statePayload = useMemo(() => ({ mode, remaining, running, total: modeSeconds }), [mode, remaining, running, modeSeconds]);
+
+  const saveDurations = (nextDurations) => {
+    setDurations(nextDurations);
+    if (running) {
+      setPendingDurationUpdate(true);
+      setNotice('请结束本次计时，已保存的时间将在下次倒计时自动生效。');
+    } else {
+      setRemaining(nextDurations[mode] * 60);
+      setPaused(false);
+      setPendingDurationUpdate(false);
+      setNotice('保存后已更新当前倒计时。');
+    }
+    setSettingsOpen(false);
+  };
 
   const switchMode = (next) => {
     deadlineRef.current = null;
@@ -414,6 +494,7 @@ export default function App() {
     setRemaining(durations[next] * 60);
     setRunning(false);
     setPaused(false);
+    setPendingDurationUpdate(false);
   };
   const reset = () => {
     deadlineRef.current = null;
@@ -423,6 +504,7 @@ export default function App() {
   };
   const startTimer = () => {
     if (running || remaining <= 0) return;
+    if (mode === 'focus' && focusStartedAt == null) setFocusStartedAt(Date.now());
     deadlineRef.current = performance.now() + remaining * 1000;
     setPaused(false);
     setRunning(true);
@@ -437,29 +519,58 @@ export default function App() {
     setPaused(true);
     setRunning(false);
   };
+  const finishFocusSession = (actualSeconds) => {
+    if (mode !== 'focus' || !focusStartedAt) return;
+    const seconds = Math.max(0, Math.round(actualSeconds));
+    if (!seconds) return;
+    setFocusSessions((all) => ({ ...all, [today]: [...(all[today] || []), { actualSeconds: seconds, startedAt: focusStartedAt, endedAt: Date.now() }] }));
+    setFocusStartedAt(null);
+  };
   const toggleRunning = useCallback(() => {
     if (running) pauseTimer();
     else startTimer();
   }, [running, remaining]);
   const skip = () => switchMode(nextMode(mode, completed));
 
-  const toggleTask = (task) => {
+  const toggleTask = (task, parentId = null) => {
+    if (parentId) {
+      const parent = tasks.find((item) => item.id === parentId);
+      if (!parent) return;
+      const subtask = parent.subtasks.find((item) => item.id === task.id);
+      if (!subtask) return;
+      const nextDone = !subtask.done;
+      const amount = normalizePomodoros(subtask.pomodoros);
+      if (nextDone) {
+        const result = consumeTaskTomatoes({ pomodoros: amount }, completed - digested);
+        if (!result.ok) {
+          setNotice(result.message);
+          return;
+        }
+        setDigested((value) => value + result.amount);
+      } else {
+        setDigested((value) => Math.max(0, value - amount));
+      }
+      setTasks((list) => list.map((item) => item.id !== parentId ? item : toggleSubtaskCompletion(item, task.id)));
+      setNotice(nextDone ? `子任务“${task.text}”已完成，番茄已消化。` : '已取消子任务完成，番茄已退回今日可用数量。');
+      return;
+    }
     if (task.done) {
-      const amount = normalizePomodoros(task.pomodoros);
-      setTasks((list) => list.map((item) => item.id === task.id ? { ...item, done: false } : item));
+      const amount = summarizeTaskTree(task).digested;
+      setTasks((list) => list.map((item) => item.id === task.id ? { ...item, done: false, subtasks: item.subtasks.map((subtask) => ({ ...subtask, done: false })) } : item));
       setDigested((value) => Math.max(0, value - amount));
       setNotice('已取消任务完成，番茄已退回今日可用数量。');
       return;
     }
-    const result = consumeTaskTomatoes(task, completed - digested);
+    const amount = summarizeTaskTree(task).pomodoros - summarizeTaskTree(task).digested;
+    const result = consumeTaskTomatoes({ pomodoros: amount }, completed - digested);
     if (!result.ok) {
       setNotice(result.message);
-      window.setTimeout(() => setNotice(''), 2600);
+      window.setTimeout(() => setNotice(''), 2800);
       return;
     }
-    setTasks((list) => list.map((item) => item.id === task.id ? { ...item, done: true } : item));
+    setTasks((list) => list.map((item) => item.id === task.id ? completeTaskTree(item) : item));
     setDigested((value) => value + result.amount);
-    setNotice(result.amount === 0 ? '任务已完成，不需要消耗番茄。' : `任务已完成，消化 ${result.amount} 个番茄。`);
+    setNotice(result.amount === 0 ? '任务已完成。' : `任务已完成，消化 ${result.amount} 个番茄。`);
     window.setTimeout(() => setNotice(''), 2200);
   };
 
@@ -508,6 +619,7 @@ export default function App() {
       setRemaining((value) => Math.min(value, nextRemaining));
       if (nextRemaining > 0) return;
 
+      finishFocusSession((durations[mode] || 0) * 60);
       window.clearInterval(intervalId);
       timerRef.current = null;
       deadlineRef.current = null;
@@ -544,12 +656,13 @@ export default function App() {
   useEffect(() => { saveJson(localStorage, 'tomato.tasks', tasks); }, [tasks]);
   useEffect(() => { saveJson(localStorage, 'tomato.completed', completed); }, [completed]);
   useEffect(() => { saveJson(localStorage, 'tomato.digested', digested); }, [digested]);
+  useEffect(() => { saveJson(localStorage, 'tomato.focusSessions', focusSessions); }, [focusSessions]);
   useEffect(() => {
     setDailyHistory((history) => ({
       ...history,
-      [today]: { date: today, tasks, edibleTomatoes: completed, digestedTomatoes: digested },
+      [today]: { date: today, tasks, edibleTomatoes: completed, digestedTomatoes: digested, focusSessions: focusSessions[today] || [] },
     }));
-  }, [tasks, completed, digested, today]);
+  }, [tasks, completed, digested, today, focusSessions]);
   useEffect(() => { saveJson(localStorage, 'tomato.dailyTodo', dailyHistory); }, [dailyHistory]);
   useEffect(() => { saveJson(localStorage, 'tomato.durations', durations); }, [durations]);
   useEffect(() => {
@@ -588,7 +701,7 @@ export default function App() {
       </div>
       {view === 'todo' ? (
         <main className="todo-page">
-          <VerticalTodoOverview tasks={tasks} history={dailyHistory} today={today} range={todoRange} anchorDate={todoAnchor} selectedDates={selectedDates} onRangeChange={changeTodoRange} onAnchorChange={moveTodoAnchor} onSelectDate={setSelectedDates} onToggleTask={toggleTask} onExport={exportSelectedMarkdown} />
+          <VerticalTodoOverview tasks={tasks} history={dailyHistory} today={today} focusSessions={focusSessions} range={todoRange} anchorDate={todoAnchor} selectedDates={selectedDates} onRangeChange={changeTodoRange} onAnchorChange={moveTodoAnchor} onSelectDate={setSelectedDates} onToggleTask={toggleTask} onExport={exportSelectedMarkdown} />
         </main>
       ) : (
         <main className="dashboard">
@@ -597,6 +710,7 @@ export default function App() {
         </main>
       )}
       <footer className="bottom-bar glass-line">
+        <div className="today-focus"><span>今日专注</span><strong>{todayFocusLabel}</strong></div>
         <div><span>已食用</span><strong>{completed}</strong></div>
         <div><span>已消化</span><strong>{digested}</strong></div>
         <div><span>完成任务</span><strong>{tasks.filter((t) => t.done).length}/{tasks.length}</strong></div>
@@ -606,7 +720,7 @@ export default function App() {
           <button onClick={() => setSettingsOpen(true)}><Settings size={15} /> 设置</button>
         </div>
       </footer>
-      <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} durations={durations} setDurations={setDurations} opacity={opacity} setOpacity={setOpacity} />
+      <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} durations={durations} opacity={opacity} setOpacity={setOpacity} onSave={saveDurations} running={running} />
     </div>
   );
 }
