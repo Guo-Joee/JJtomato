@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, consumeTaskTomatoes, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate, addSubtask, completeTaskTree, carryOverTaskTree, summarizeTaskTree, flattenTaskTree, formatDuration, summarizeDay, toggleSubtaskCompletion } from '../src/core/daily-todo.mjs';
+import { buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, consumeTaskTomatoes, dailyStatsForDate, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate, addSubtask, completeTaskTree, carryOverTaskTree, summarizeTaskTree, flattenTaskTree, formatDuration, summarizeDay, toggleSubtaskCompletion } from '../src/core/daily-todo.mjs';
 
 test('主任务树可以展开为带主任务名称的历史回顾记录', () => {
   const rows = flattenTaskTree({ id: 1, text: '复习通信协议', subtasks: [{ id: 2, text: 'IIC', done: true, parentId: 1 }] }, '2026-08-18');
@@ -94,6 +94,10 @@ test('每日统计按日期独立，新日期没有记录时从零开始', () =>
   const stats = { '2026-08-17': { edibleTomatoes: 4, digestedTomatoes: 2 } };
   assert.deepEqual(stats['2026-08-17'], { edibleTomatoes: 4, digestedTomatoes: 2 });
   assert.deepEqual(stats['2026-08-18'] || { edibleTomatoes: 0, digestedTomatoes: 0 }, { edibleTomatoes: 0, digestedTomatoes: 0 });
+});
+
+test('读取当天统计不会回退到旧版全局已食用和已消化数量', () => {
+  assert.deepEqual(dailyStatsForDate({ '2026-08-17': { edibleTomatoes: 4, digestedTomatoes: 4 } }, '2026-08-18'), { edibleTomatoes: 0, digestedTomatoes: 0 });
 });
 
 test('0 番茄任务可以直接完成且不消耗库存', () => {

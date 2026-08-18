@@ -123,6 +123,14 @@ export function summarizeDay(day = {}) {
   };
 }
 
+export function dailyStatsForDate(allStats = {}, date) {
+  const value = allStats?.[date];
+  return {
+    edibleTomatoes: Math.max(0, Number(value?.edibleTomatoes) || 0),
+    digestedTomatoes: Math.max(0, Number(value?.digestedTomatoes) || 0),
+  };
+}
+
 export function consumeTaskTomatoes(task, available) {
   const amount = normalizePomodoros(task?.pomodoros);
   const stock = Math.max(0, Number(available) || 0);

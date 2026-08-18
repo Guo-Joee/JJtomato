@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { MODES, formatTime, nextMode, progressOf, remainingSecondsAt } from '../core/timer.mjs';
 import { loadJson, saveJson } from '../core/storage.mjs';
-import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, completeTaskTree, consumeTaskTomatoes, daysForRange, flattenTaskTree, formatDuration, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, shiftDate, summarizeDay, summarizeTaskTree, toggleSubtaskCompletion } from '../core/daily-todo.mjs';
+import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, carryOverTasks, completeTaskTree, consumeTaskTomatoes, dailyStatsForDate, daysForRange, flattenTaskTree, formatDuration, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, shiftDate, summarizeDay, summarizeTaskTree, toggleSubtaskCompletion } from '../core/daily-todo.mjs';
 
 const VISUAL = {
   focus: {
@@ -300,7 +300,7 @@ function TodoOverview({ tasks, history, today, range, anchorDate, selectedDates,
   );
 }
 
-function VerticalTodoOverview({ tasks, history, today, focusSessions, range, anchorDate, selectedDates, onRangeChange, onAnchorChange, onSelectDate, onToggleTask, onExport }) {
+function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions, range, anchorDate, selectedDates, onRangeChange, onAnchorChange, onSelectDate, onToggleTask, onExport }) {
   const [collapsedDays, setCollapsedDays] = useState({});
   const [collapsedParents, setCollapsedParents] = useState({});
   const days = daysForRange(range, anchorDate);
@@ -333,7 +333,7 @@ function VerticalTodoOverview({ tasks, history, today, focusSessions, range, anc
         {groups.map((group) => (
           <section className={`timeline-day ${group.date === today ? 'today' : ''}`} key={group.date}>
             <div className="timeline-node" />
-            <header><strong>{group.date.slice(5).replace('-', '/')}</strong><span>{group.date === today ? '今天' : new Date(`${group.date}T12:00:00`).toLocaleDateString('zh-CN', { weekday: 'short' })} · 专注 {summarizeDay(history?.[group.date] || { focusSessions: focusSessions?.[group.date] || [] }).label}</span></header>
+            <header><strong>{group.date.slice(5).replace('-', '/')}</strong><span>{group.date === today ? '今天' : new Date(`${group.date}T12:00:00`).toLocaleDateString('zh-CN', { weekday: 'short' })} · 专注 {summarizeDay(history?.[group.date] || { focusSessions: focusSessions?.[group.date] || [] }).label} · 已食用 {dailyStats?.[group.date]?.edibleTomatoes || history?.[group.date]?.edibleTomatoes || 0} · 已消化 {dailyStats?.[group.date]?.digestedTomatoes || history?.[group.date]?.digestedTomatoes || 0}</span></header>
             <button className="timeline-collapse" onClick={() => setCollapsedDays((state) => ({ ...state, [group.date]: !state[group.date] }))}>{collapsedDays[group.date] ? '展开任务' : '折叠任务'}</button>
             {!collapsedDays[group.date] && <div className="timeline-items">
               {group.tasks.length === 0 ? <div className="timeline-empty">今天还没有任务</div> : group.tasks.map((task) => {
@@ -342,13 +342,13 @@ function VerticalTodoOverview({ tasks, history, today, focusSessions, range, anc
                 return (
                 <article className={`timeline-task-group ${task.done ? 'done' : ''}`} key={`${task.id}:${group.date}`}>
                   <div className="timeline-parent">
-                    <button className="timeline-check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task)}>{task.done && <Check size={13} />}</button>
+                    <button className="timeline-check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task, null, group.date)}>{task.done && <Check size={13} />}</button>
                     <div className="timeline-task-main"><strong>{task.text}</strong><small>{task.done ? '已完成' : '待完成'} · {children.filter((child) => child.done).length}/{children.length} 个子任务</small>{tomatoDots(summarizeTaskTree(task).pomodoros)}</div>
                     {children.length > 0 && <button className="parent-collapse" aria-label={collapsed ? '展开子任务' : '折叠子任务'} onClick={() => setCollapsedParents((state) => ({ ...state, [task.id]: !state[task.id] }))}>{collapsed ? '展开' : '折叠'}</button>}
                   </div>
                   {!collapsed && children.length > 0 && <div className="timeline-children">
                     {children.map((child) => <div className={`timeline-child ${child.done ? 'done' : ''}`} key={child.id}>
-                      <button className="timeline-check" aria-label={child.done ? '取消完成子任务' : '完成子任务'} onClick={() => onToggleTask(child, task.id)}>{child.done && <Check size={12} />}</button>
+                      <button className="timeline-check" aria-label={child.done ? '取消完成子任务' : '完成子任务'} onClick={() => onToggleTask(child, task.id, group.date)}>{child.done && <Check size={12} />}</button>
                       <div className="timeline-task-main"><strong>{child.text}</strong><small>所属主任务：{task.text} · {child.done ? '已完成' : '待完成'}</small>{tomatoDots(child.pomodoros)}</div>
                     </div>)}
                   </div>}
@@ -444,7 +444,7 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
   const initialDailyStats = loadJson(localStorage, 'tomato.dailyStats', {});
-  const initialTodayStats = initialDailyStats[localDateKey()] || { edibleTomatoes: 0, digestedTomatoes: 0 };
+  const initialTodayStats = dailyStatsForDate(initialDailyStats, localDateKey());
   const [completed, setCompleted] = useState(initialTodayStats.edibleTomatoes);
   const [digested, setDigested] = useState(initialTodayStats.digestedTomatoes);
   const [tasks, setTasks] = useState(() => carryOverTasks(loadJson(localStorage, 'tomato.tasks', INITIAL_TASKS), localDateKey()));
@@ -467,7 +467,7 @@ export default function App() {
       const next = localDateKey();
       if (next === today) return;
       setTasks((items) => carryOverTasks(items, next));
-      const nextStats = dailyStats[next] || { edibleTomatoes: 0, digestedTomatoes: 0 };
+      const nextStats = dailyStatsForDate(dailyStats, next);
       setCompleted(nextStats.edibleTomatoes);
       setDigested(nextStats.digestedTomatoes);
       setToday(next);
@@ -538,7 +538,28 @@ export default function App() {
   }, [running, remaining]);
   const skip = () => switchMode(nextMode(mode, completed));
 
-  const toggleTask = (task, parentId = null) => {
+  const toggleTask = (task, parentId = null, targetDate = today) => {
+    if (targetDate !== today) {
+      setDailyHistory((history) => {
+        const day = history[targetDate];
+        if (!day) return history;
+        const available = (day.edibleTomatoes || 0) - (day.digestedTomatoes || 0);
+        const update = (items) => items.map((item) => {
+          if (parentId && item.id === parentId) return toggleSubtaskCompletion(item, task.id);
+          if (!parentId && item.id === task.id) return task.done ? { ...item, done: false, subtasks: item.subtasks.map((subtask) => ({ ...subtask, done: false })) } : completeTaskTree(item);
+          return item;
+        });
+        const amount = parentId ? normalizePomodoros(task.pomodoros) : summarizeTaskTree(task).pomodoros - summarizeTaskTree(task).digested;
+        const nextDone = !task.done;
+        if (nextDone && amount > available) {
+          setNotice('该日期可消化番茄不足，无法补完成任务。');
+          return history;
+        }
+        const delta = nextDone ? amount : -amount;
+        return { ...history, [targetDate]: { ...day, tasks: update(day.tasks || []), digestedTomatoes: Math.max(0, (day.digestedTomatoes || 0) + delta) } };
+      });
+      return;
+    }
     if (parentId) {
       const parent = tasks.find((item) => item.id === parentId);
       if (!parent) return;
@@ -711,7 +732,7 @@ export default function App() {
       </div>
       {view === 'todo' ? (
         <main className="todo-page">
-          <VerticalTodoOverview tasks={tasks} history={dailyHistory} today={today} focusSessions={focusSessions} range={todoRange} anchorDate={todoAnchor} selectedDates={selectedDates} onRangeChange={changeTodoRange} onAnchorChange={moveTodoAnchor} onSelectDate={setSelectedDates} onToggleTask={toggleTask} onExport={exportSelectedMarkdown} />
+          <VerticalTodoOverview tasks={tasks} history={dailyHistory} dailyStats={dailyStats} today={today} focusSessions={focusSessions} range={todoRange} anchorDate={todoAnchor} selectedDates={selectedDates} onRangeChange={changeTodoRange} onAnchorChange={moveTodoAnchor} onSelectDate={setSelectedDates} onToggleTask={toggleTask} onExport={exportSelectedMarkdown} />
         </main>
       ) : (
         <main className="dashboard">

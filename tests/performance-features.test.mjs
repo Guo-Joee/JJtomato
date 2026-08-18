@@ -176,6 +176,23 @@ test('每日专注时长保存到 focusSessions 并显示在底部和日期时�
   assert.match(app, /focusSessions=\{focusSessions\}/);
 });
 
+test('已食用和已消化使用按日期保存的 dailyStats，不依赖旧版全局计数', () => {
+  assert.match(app, /tomato\.dailyStats/);
+  assert.match(app, /dailyStatsForDate/);
+  assert.match(app, /initialTodayStats = dailyStatsForDate/);
+});
+
+test('Todo 日期标题显示对应日期的已食用和已消化番茄', () => {
+  assert.match(app, /dailyStats\?\.\[group\.date\]/);
+  assert.match(app, /已食用/);
+  assert.match(app, /已消化/);
+});
+
+test('Todo 总览点击历史日期任务时使用日期参数更新对应历史记录', () => {
+  assert.match(app, /onToggleTask\(task, null, group\.date\)/);
+  assert.match(app, /onToggleTask\(child, task\.id, group\.date\)/);
+});
+
 test('任务复选框使用 flex 居中并且 Todo 子任务使用父子层级样式', () => {
   assert.match(css, /\.check\s*\{[^}]*display:\s*inline-flex/s);
   assert.match(css, /\.subtask-check\s*\{[^}]*justify-content:\s*center/s);
