@@ -2,12 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Check, Coffee, Download, ListTodo, Minus, Pause, Play, Plus, RotateCcw,
-  Settings, SkipForward, Square, Trash2, X,
+  Check, Coffee, Download, ListTodo, MessageCircle, Minus, Pause, Play, Plus, RotateCcw,
+  Send, Settings, SkipForward, Square, Trash2, Users, X,
 } from 'lucide-react';
-import { MODES, formatTime, nextMode, progressOf, remainingSecondsAt } from '../core/timer.mjs';
+import { MINIMUM_FOCUS_SESSION_SECONDS, MODES, accumulatedFocusSeconds, formatTime, nextMode, progressOf, remainingSecondsAt, shouldPersistFocusSession } from '../core/timer.mjs';
 import { loadJson, saveJson } from '../core/storage.mjs';
-import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, buildTimelineTaskGroups, carryOverTasks, completeTaskTree, consumeTaskTomatoes, dailyStatsForDate, daysForRange, flattenTaskTree, formatDuration, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, shiftDate, summarizeDay, summarizeTaskTree, toggleSubtaskCompletion, updateTaskInTree } from '../core/daily-todo.mjs';
+import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, buildTimelineTaskGroups, completeTaskTree, consumeTaskTomatoes, dailyStatsForDate, daysForRange, flattenTaskTree, formatDuration, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, reopenTaskTree, rolloverTasksWithHistory, summarizeDay, summarizeTaskTree, toggleSubtaskCompletion, updateTaskInTree } from '../core/daily-todo.mjs';
+import { COMPANION_QUICK_MESSAGES, COMPANION_REACTIONS, COMPANION_STATES, DEFAULT_COMPANION_PRIVACY, INITIAL_COMPANION_MESSAGES, INITIAL_COMPANIONS, addCompanionMessage, companionActivityLabel, companionStateLabel, normalizeCompanion, primaryCompanion, updateCompanionState } from '../core/companion.mjs';
 
 const VISUAL = {
   focus: {
@@ -94,6 +95,7 @@ function TimerHero({ mode, remaining, running, paused, onToggle, onReset, onSkip
   const progress = progressOf(remaining, cfg.seconds);
   const radius = 128;
   const circumference = 2 * Math.PI * radius;
+  const isFocus = mode === 'focus';
 
   return (
     <section className="timer-hero glass-panel" style={{ '--accent': visual.color, '--glow': visual.glow }}>
@@ -123,19 +125,114 @@ function TimerHero({ mode, remaining, running, paused, onToggle, onReset, onSkip
             <TomatoMark size={38} mode={mode} />
           </motion.div>
           <div className="time" aria-live="polite">{formatTime(remaining)}</div>
-          <div className="status">{running ? '正在专注' : paused ? '已暂停' : '准备开始'}</div>
+          <div className="status">{running ? isFocus ? '正在专注' : '正在休息' : paused ? '已暂停' : '准备开始'}</div>
         </div>
       </div>
       <div className="timer-actions">
         <button className="secondary" aria-label="重置" onClick={onReset}><RotateCcw size={19} /></button>
         <motion.button className="primary-action" onClick={onToggle} whileTap={{ scale: .93 }} whileHover={{ scale: 1.035 }}>
           {running ? <Pause size={27} fill="currentColor" /> : <Play size={27} fill="currentColor" />}
-          <span>{running ? '暂停一下' : paused ? '继续专注' : '开始专注'}</span>
+          <span>{running ? '暂停一下' : paused ? isFocus ? '继续专注' : '继续休息' : isFocus ? '开始专注' : '开始休息'}</span>
         </motion.button>
         <button className="secondary" aria-label="跳过" onClick={onSkip}><SkipForward size={20} /></button>
       </div>
       <div className="key-hints"><kbd>Space</kbd> 开始/暂停 <i /> <kbd>R</kbd> 重置</div>
     </section>
+  );
+}
+
+function ExpandableTaskName({ text, meta, className = '', onDoubleClick }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = String(text || '').length > 24;
+  return (
+    <button
+      type="button"
+      className={`expandable-task-name ${expanded ? 'expanded' : ''} ${className}`}
+      title={text}
+      aria-label={isLong ? `${expanded ? '收起' : '展开'}任务名称：${text}` : text}
+      aria-expanded={expanded}
+      onClick={(event) => { event.stopPropagation(); setExpanded((value) => !value); }}
+      onDoubleClick={(event) => { event.stopPropagation(); onDoubleClick?.(event); }}
+    >
+      <span>{text}</span>
+      {meta && <small>{meta}</small>}
+      {isLong && <em>{expanded ? '收起' : '点击展开完整名称'}</em>}
+    </button>
+  );
+}
+
+function CompanionPet({ companion, open, onClick }) {
+  const friend = normalizeCompanion(companion);
+  const isTyping = friend.state === 'typing';
+  return (
+    <button className={`companion-pet state-${friend.state} ${open ? 'open' : ''}`} onClick={onClick} aria-label={`打开与${friend.name}的陪伴面板`} aria-expanded={open}>
+      <span className="companion-pet-aura" aria-hidden="true" />
+      <span className="companion-pet-bubble">{isTyping ? `${friend.name}正在输入…` : friend.state === 'offline' ? '好友暂时不在' : `${friend.name} ${companionStateLabel(friend.state)}`}</span>
+      <span className="companion-cat" aria-hidden="true"><span className="companion-cat-face">🐱</span><span className="companion-keyboard">▰ ▰ ▰</span></span>
+      <span className="companion-status-dot" aria-hidden="true" />
+      <span className="companion-pet-label">桌边陪伴</span>
+    </button>
+  );
+}
+
+function CompanionPanel({ open, companions, selectedId, messages, togetherId, onSelect, onClose, onReaction, onSendMessage, onQuickMessage, onChangeState, onStartTogether }) {
+  const [draft, setDraft] = useState('');
+  const messageListRef = useRef(null);
+  const selected = companions.find((item) => item.id === selectedId) || companions[0];
+  const isTogether = selected?.id === togetherId;
+  const isPausedTogether = isTogether && selected?.state === 'paused';
+  const selectedMessages = messages.filter((message) => message.friendId === selected?.id).slice(-8);
+  const latestMessageId = selectedMessages.at(-1)?.id;
+  const friendListSize = companions.length > 4 ? 'many' : companions.length;
+  useEffect(() => {
+    if (!messageListRef.current) return;
+    messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+  }, [selected?.id, latestMessageId]);
+  const submit = (event) => {
+    event.preventDefault();
+    if (!selected || !draft.trim()) return;
+    onSendMessage(selected.id, draft);
+    setDraft('');
+  };
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div className="companion-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={onClose}>
+          <motion.aside className="companion-panel glass-panel" initial={{ opacity: 0, x: 24, scale: .98 }} animate={{ opacity: 1, x: 0, scale: 1 }} exit={{ opacity: 0, x: 24, scale: .98 }} transition={{ duration: .18 }} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="companion-panel-head"><div><span className="eyebrow">桌边陪伴</span><strong><Users size={15} /> 和朋友一起在场</strong></div><button className="companion-close" onClick={onClose} aria-label="关闭陪伴面板"><X size={16} /></button></div>
+            <p className="companion-panel-note">看见她在，也让她知道你在。状态只按你的权限共享。</p>
+            <div className={`companion-friend-list count-${friendListSize}`}>
+              {companions.map((friend) => (
+                <button className={`companion-friend ${friend.id === selected?.id ? 'active' : ''}`} key={friend.id} onClick={() => onSelect(friend.id)}>
+                  <span className={`companion-avatar ${friend.avatarTone || 'rose'}`}>🐱</span>
+                  <span className="companion-friend-copy"><strong>{friend.name}</strong><small><i className={`companion-state-dot state-${friend.state}`} /> {companionStateLabel(friend.state)} · {companionActivityLabel(friend)}</small><em>{friend.durationLabel}</em></span>
+                  {friend.unread > 0 && <b className="companion-unread">{friend.unread}</b>}
+                </button>
+              ))}
+            </div>
+            {selected ? (
+              <>
+                <div className="companion-selected"><span className={`companion-selected-icon state-${selected.state}`}>🐱</span><div><strong>{selected.name}</strong><small>{companionActivityLabel(selected)}{selected.state === 'typing' ? ' · 不显示输入内容' : ''}</small></div></div>
+                <button className="companion-together" onClick={() => onStartTogether(selected.id)} disabled={selected.state === 'offline' || (isTogether && !isPausedTogether)}><span>🪑</span>{selected.state === 'offline' ? '等她回来再一起坐下' : isPausedTogether ? `和${selected.name}继续专注` : isTogether ? '正在一起专注' : `和${selected.name}一起坐下`}</button>
+                <div className="companion-actions" aria-label="陪伴互动">
+                  <button onClick={() => onReaction(selected.id, 'tomato')}><span>🍅</span>送番茄</button>
+                  <button onClick={() => onReaction(selected.id, 'coffee')}><Coffee size={14} />递咖啡</button>
+                  <button onClick={() => onReaction(selected.id, 'wave')}><span>👋</span>挥挥手</button>
+                  <button onClick={() => onReaction(selected.id, 'paw')}><span>🐾</span>轻敲猫爪</button>
+                </div>
+                <div className="companion-quick"><div><strong>快捷留言</strong><small>不用打断专注，也可以回应她</small></div><div className="companion-quick-list">{COMPANION_QUICK_MESSAGES.map((text) => <button key={text} onClick={() => onQuickMessage(selected.id, text)}>{text}</button>)}</div></div>
+                <div className="companion-message-title"><span><MessageCircle size={14} /> 陪伴留言</span><small>只保留这间房的短消息</small></div>
+                <div className="companion-messages" ref={messageListRef} aria-live="polite">
+                  {selectedMessages.length === 0 ? <div className="companion-empty">还没有留言，先送一颗番茄吧。</div> : selectedMessages.map((message) => <div className={`companion-message ${message.sender === 'me' ? 'mine' : ''} ${message.kind === 'reaction' ? 'reaction' : ''}`} key={message.id}><span>{message.text}</span><small>{message.createdAt}</small></div>)}
+                </div>
+                <form className="companion-message-form" onSubmit={submit}><input value={draft} maxLength={300} onChange={(event) => setDraft(event.target.value)} placeholder="说一句悄悄话…" aria-label="输入陪伴留言" /><button type="submit" aria-label="发送消息" disabled={!draft.trim()}><Send size={15} /></button></form>
+                <label className="companion-demo-row"><span>本地演示状态</span><select value={selected.state} onChange={(event) => onChangeState(selected.id, event.target.value)}>{Object.entries(COMPANION_STATES).map(([key, value]) => <option value={key} key={key}>{value.label}</option>)}</select></label>
+              </>
+            ) : <div className="companion-empty large">还没有好友，下一步可以创建陪伴房。</div>}
+          </motion.aside>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -204,7 +301,7 @@ function TasksPanel({ tasks, setTasks, onToggleTask, notice, today }) {
       {task.subtasks.map((subtask) => (
         <div className={`subtask ${subtask.done ? 'done' : ''}`} key={subtask.id}>
           <button className="subtask-check" aria-label={subtask.done ? '取消完成子任务' : '完成子任务'} onClick={() => onToggleTask(subtask, task.id)}>{subtask.done && <Check size={12} />}</button>
-          <span>{subtask.text}</span>
+          <ExpandableTaskName text={subtask.text} className="subtask-name" />
           <div className="pomodoro-editor"><TomatoMark size={13} /><input type="number" min="0" max="99" value={subtask.pomodoros} disabled={subtask.done} aria-label="子任务番茄数量" onChange={(e) => updateSubtask(task.id, subtask.id, { pomodoros: normalizePomodoros(e.target.value, 0) })} /></div>
         </div>
       ))}
@@ -216,7 +313,7 @@ function TasksPanel({ tasks, setTasks, onToggleTask, notice, today }) {
       <div className="add-task"><input value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="今天最重要的一件事…" /><button onClick={add} aria-label="添加任务"><Plus size={18} /></button></div>
       <div className="task-list"><AnimatePresence initial={false}>{tasks.map((task) => (
         <motion.div className={`task-group ${task.done ? 'done' : ''}`} key={task.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 16 }}>
-          <div className="task" onContextMenu={(event) => openContextMenu(task, event)}><button className="check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task)}>{task.done && <Check size={14} />}</button><span>{task.text}<small>{task.subtasks?.length ? `${task.subtasks.filter((item) => item.done).length}/${task.subtasks.length} 个子任务` : ''}</small></span><div className="pomodoro-editor" aria-label={`${task.text}需要的番茄数`}><TomatoMark size={15} /><input type="number" min="0" max="99" value={summarizeTaskTree(task).pomodoros} disabled={task.done || task.subtasks?.length > 0} aria-label="番茄数量" readOnly={task.subtasks?.length > 0} onChange={(e) => updatePomodoros(task.id, e.target.value)} /></div><button className="delete" onClick={() => setTasks((list) => list.filter((t) => t.id !== task.id))}><Trash2 size={15} /></button></div>
+          <div className="task" onContextMenu={(event) => openContextMenu(task, event)}><button className="check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task)}>{task.done && <Check size={14} />}</button><ExpandableTaskName text={task.text} meta={task.subtasks?.length ? `${task.subtasks.filter((item) => item.done).length}/${task.subtasks.length} 个子任务` : null} /><div className="pomodoro-editor" aria-label={`${task.text}需要的番茄数`}><TomatoMark size={15} /><input type="number" min="0" max="99" value={summarizeTaskTree(task).pomodoros} disabled={task.done || task.subtasks?.length > 0} aria-label="番茄数量" readOnly={task.subtasks?.length > 0} onChange={(e) => updatePomodoros(task.id, e.target.value)} /></div><button className="delete" onClick={() => setTasks((list) => list.filter((t) => t.id !== task.id))}><Trash2 size={15} /></button></div>
           {task.subtasks?.length > 0 && <button className="collapse-toggle" onClick={() => setCollapsed((state) => ({ ...state, [task.id]: !state[task.id] }))}>{collapsed[task.id] ? '展开子任务' : '折叠子任务'}</button>}
           {!collapsed[task.id] && renderSubtasks(task)}
           {subtaskEditorId === task.id && (
@@ -233,81 +330,16 @@ function TasksPanel({ tasks, setTasks, onToggleTask, notice, today }) {
   );
 }
 
-function TodoOverview({ tasks, history, today, range, anchorDate, selectedDates, onRangeChange, onAnchorChange, onSelectDate, onToggleTask, onExport }) {
-  const days = daysForRange(range, anchorDate);
-  const records = new Map();
-  Object.values(history || {}).forEach((day) => {
-    (day.tasks || []).forEach((task) => {
-      const item = normalizeTask(task, day.date);
-      records.set(`${item.id}:${item.plannedDate || day.date}`, { ...item, timelineDate: item.plannedDate || day.date });
-    });
-  });
-  tasks.forEach((task) => {
-    const item = normalizeTask(task, today);
-    records.set(`${item.id}:${item.plannedDate}`, { ...item, timelineDate: item.plannedDate });
-  });
-  const rows = [...records.values()].filter((task) => days.includes(task.timelineDate));
-  const rangeLabel = range === 'month' ? anchorDate.slice(0, 7) : range === 'week' ? `${days[0]} ～ ${days.at(-1)}` : anchorDate;
-  const selected = new Set(selectedDates);
-  const toggleDate = (date) => onSelectDate(selected.has(date) ? selectedDates.filter((item) => item !== date) : [...selectedDates, date]);
-  return (
-    <section className="todo-overview glass-panel">
-      <div className="todo-overview-head">
-        <div>
-          <span className="eyebrow">番茄时间轴</span>
-          <h1>Todo 总览</h1>
-          <p>普通甘特图 · 任务未完成会自动顺延，并保留最初添加日期。</p>
-        </div>
-        <button className="export-todo" disabled={!selectedDates.length} onClick={onExport}><Download size={16} /> 导出已选日期</button>
-      </div>
-      <div className="todo-toolbar">
-        <div className="range-switcher" aria-label="甘特图范围">
-          {['month', 'week', 'day'].map((item) => <button key={item} className={range === item ? 'active' : ''} onClick={() => onRangeChange(item)}>{item === 'month' ? '月' : item === 'week' ? '周' : '日'}</button>)}
-        </div>
-        <div className="date-navigator">
-          <button aria-label="上一个日期范围" onClick={() => onAnchorChange(-1)}>‹</button>
-          <strong>{rangeLabel}</strong>
-          <button aria-label="下一个日期范围" onClick={() => onAnchorChange(1)}>›</button>
-          <button className="today-jump" onClick={() => onRangeChange(range, today)}>今天</button>
-        </div>
-      </div>
-      <div className="export-dates">
-        <span>选择导出日期</span>
-        <div>{days.map((day) => <label key={day}><input type="checkbox" checked={selected.has(day)} onChange={() => toggleDate(day)} /><b>{day.slice(5).replace('-', '/')}</b></label>)}</div>
-      </div>
-      <div className="todo-summary">
-        <span><b>{tasks.length}</b> 项任务</span>
-        <span><b>{tasks.filter((task) => task.done).length}</b> 项已完成</span>
-        <span><b>{tasks.filter((task) => !task.done).length}</b> 项待继续</span>
-      </div>
-      <div className="gantt-scroll">
-        <div className="gantt" style={{ '--day-count': days.length }}>
-          <div className="gantt-corner">任务 / 来源</div>
-          {days.map((day) => <div className={`gantt-day ${day === today ? 'today' : ''}`} key={day}><strong>{day.slice(5).replace('-', '/')}</strong><small>{day === today ? '今天' : new Date(`${day}T12:00:00`).toLocaleDateString('zh-CN', { weekday: 'short' })}</small></div>)}
-          {rows.length === 0 && <div className="gantt-empty">这个日期范围还没有任务。</div>}
-          {rows.map((task) => (
-            <React.Fragment key={`${task.id}:${task.timelineDate}`}>
-              <div className={`gantt-task-label ${task.done ? 'done' : ''}`}>
-                <button className="gantt-check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task)}>{task.done && <Check size={13} />}</button>
-                <div><strong>{task.text}</strong><small>{task.done ? '已完成' : '待完成'} · 添加于 {task.addedDate}{task.carryCount ? ` · 顺延 ${task.carryCount} 次` : ''}</small></div>
-              </div>
-              {days.map((day) => <div className={`gantt-cell ${day === today ? 'today' : ''}`} key={day}>{task.timelineDate === day && <div className={`gantt-bar ${task.done ? 'done' : ''}`} title={`${task.text} · ${task.pomodoros || 0} 个番茄`}><TomatoMark size={16} /><span>{task.pomodoros || 0}</span></div>}</div>)}
-            </React.Fragment>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions, range, anchorDate, selectedDates, onRangeChange, onAnchorChange, onSelectDate, onToggleTask, onUpdateHistoricalTask, onExport }) {
   const [editing, setEditing] = useState(null);
+  const [draftText, setDraftText] = useState('');
   const [collapsedDays, setCollapsedDays] = useState({});
   const [collapsedParents, setCollapsedParents] = useState({});
   const beginEdit = (task, date) => { setEditing(`${date}:${task.id}`); setDraftText(task.text); };
   const saveEdit = (task, date) => { const text = draftText.trim(); if (text && text !== task.text) onUpdateHistoricalTask(date, task.id, { text }); setEditing(null); };
   const days = daysForRange(range, anchorDate);
-  const groups = buildTimelineTaskGroups({ history, currentTasks: tasks, today, days }).filter((group) => group.tasks.length || group.date === today || range === 'day');
+  const groups = buildTimelineTaskGroups({ history, currentTasks: tasks, today, days });
+  const hasTasks = groups.some((group) => group.tasks.length > 0);
   const selected = new Set(selectedDates);
   const selectedSummary = summarizeDay(history?.[anchorDate] || { focusSessions: focusSessions?.[anchorDate] || [] });
   const rangeLabel = range === 'month' ? anchorDate.slice(0, 7) : range === 'week' ? `${days[0]} ～ ${days.at(-1)}` : anchorDate;
@@ -328,12 +360,14 @@ function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions
         <div className="vertical-date-nav"><button aria-label="上一个日期范围" onClick={() => onAnchorChange(-1)}>‹</button><strong>{rangeLabel}</strong><button aria-label="下一个日期范围" onClick={() => onAnchorChange(1)}>›</button><button className="today-jump" onClick={() => onRangeChange(range, today)}>今天</button></div>
       </div>
       <div className="vertical-export-row"><span>导出日期</span><div>{days.map((day) => <label key={day}><input type="checkbox" checked={selected.has(day)} onChange={() => toggleDate(day)} /><b>{day.slice(5).replace('-', '/')}</b></label>)}</div></div>
+      <div className="plan-calendar-note">日视图用于执行，周视图用于安排，月视图用于回顾。未完成任务会进入下一天，历史记录不会被覆盖。</div>
       <div className="vertical-summary"><span><b>{tasks.length}</b>任务</span><span><b>{tasks.filter((task) => task.done).length}</b>完成</span><span><b>{tasks.filter((task) => !task.done).length}</b>待继续</span><span className="focus-total"><b>{selectedSummary.label}</b>专注</span><span><b>{selectedSummary.eaten}</b>已食用</span><span><b>{selectedSummary.digested}</b>已消化</span></div>
-      <div className="vertical-timeline">
+      <div className="vertical-timeline plan-calendar-shell">
+        <div className={`plan-calendar-grid ${range}`}>
         {groups.map((group) => (
           <section className={`timeline-day ${group.date === today ? 'today' : ''}`} key={group.date}>
             <div className="timeline-node" />
-            <header><strong>{group.date.slice(5).replace('-', '/')}</strong><span>{group.date === today ? '今天' : new Date(`${group.date}T12:00:00`).toLocaleDateString('zh-CN', { weekday: 'short' })} · 专注 {summarizeDay(history?.[group.date] || { focusSessions: focusSessions?.[group.date] || [] }).label} · 已食用 {dailyStats?.[group.date]?.edibleTomatoes || history?.[group.date]?.edibleTomatoes || 0} · 已消化 {dailyStats?.[group.date]?.digestedTomatoes || history?.[group.date]?.digestedTomatoes || 0}</span></header>
+            <header><div><strong>{group.date.slice(5).replace('-', '/')}</strong><span>{group.date === today ? '今天' : new Date(`${group.date}T12:00:00`).toLocaleDateString('zh-CN', { weekday: 'short' })}</span></div><small>专注 {summarizeDay(history?.[group.date] || { focusSessions: focusSessions?.[group.date] || [] }).label} · 已食用 {dailyStats?.[group.date]?.edibleTomatoes ?? history?.[group.date]?.edibleTomatoes ?? 0} · 已消化 {dailyStats?.[group.date]?.digestedTomatoes ?? history?.[group.date]?.digestedTomatoes ?? 0}</small></header>
             <button className="timeline-collapse" onClick={() => setCollapsedDays((state) => ({ ...state, [group.date]: !state[group.date] }))}>{collapsedDays[group.date] ? '展开任务' : '折叠任务'}</button>
             {!collapsedDays[group.date] && <div className="timeline-items">
               {group.tasks.length === 0 ? <div className="timeline-empty">今天还没有任务</div> : group.tasks.map((task) => {
@@ -343,13 +377,13 @@ function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions
                 <article className={`timeline-task-group ${task.done ? 'done' : ''}`} key={`${task.id}:${group.date}`}>
                   <div className="timeline-parent">
                     <button className="timeline-check" aria-label={task.done ? '取消完成任务' : '完成任务'} onClick={() => onToggleTask(task, null, group.date)}>{task.done && <Check size={13} />}</button>
-                    <div className="timeline-task-main">{editing === `${group.date}:${task.id}` ? <input className="timeline-edit-input" autoFocus value={draftText} onChange={(e) => setDraftText(e.target.value)} onBlur={() => saveEdit(task, group.date)} onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(task, group.date); if (e.key === 'Escape') setEditing(null); }} /> : <strong onDoubleClick={() => beginEdit(task, group.date)} title="双击编辑任务名称">{task.text}</strong>}<small>{task.done ? '已完成' : '待完成'}{task.carryCount ? ` · 创建于 ${(task.addedDate || group.date).slice(5).replace('-', '/')} · 顺延 ${task.carryCount} 次` : ''} · {children.filter((child) => child.done).length}/{children.length} 个子任务</small>{tomatoDots(summarizeTaskTree(task).pomodoros)}</div>
+                    <div className="timeline-task-main">{editing === `${group.date}:${task.id}` ? <input className="timeline-edit-input" autoFocus value={draftText} onChange={(e) => setDraftText(e.target.value)} onBlur={() => saveEdit(task, group.date)} onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(task, group.date); if (e.key === 'Escape') setEditing(null); }} /> : <ExpandableTaskName text={task.text} className="timeline-expandable-name" onDoubleClick={() => beginEdit(task, group.date)} />}<small>{task.done ? '已完成' : '待完成'}{task.carryCount ? ` · 创建于 ${(task.addedDate || group.date).slice(5).replace('-', '/')} · 顺延 ${task.carryCount} 次` : ''} · {children.filter((child) => child.done).length}/{children.length} 个子任务</small>{tomatoDots(summarizeTaskTree(task).pomodoros)}</div>
                     {children.length > 0 && <button className="parent-collapse" aria-label={collapsed ? '展开子任务' : '折叠子任务'} onClick={() => setCollapsedParents((state) => ({ ...state, [task.id]: !state[task.id] }))}>{collapsed ? '展开' : '折叠'}</button>}
                   </div>
                   {!collapsed && children.length > 0 && <div className="timeline-children">
                     {children.map((child) => <div className={`timeline-child ${child.done ? 'done' : ''}`} key={child.id}>
                       <button className="timeline-check" aria-label={child.done ? '取消完成子任务' : '完成子任务'} onClick={() => onToggleTask(child, task.id, group.date)}>{child.done && <Check size={12} />}</button>
-                      <div className="timeline-task-main">{editing === `${group.date}:${child.id}` ? <input className="timeline-edit-input" autoFocus value={draftText} onChange={(e) => setDraftText(e.target.value)} onBlur={() => saveEdit(child, group.date)} onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(child, group.date); if (e.key === 'Escape') setEditing(null); }} /> : <strong onDoubleClick={() => beginEdit(child, group.date)} title="双击编辑任务名称">{child.text}</strong>}<small>所属主任务：{task.text} · {child.done ? '已完成' : '待完成'}{child.carryCount ? ` · 创建于 ${(child.addedDate || group.date).slice(5).replace('-', '/')} · 顺延 ${child.carryCount} 次` : ''}</small>{tomatoDots(child.pomodoros)}</div>
+                      <div className="timeline-task-main">{editing === `${group.date}:${child.id}` ? <input className="timeline-edit-input" autoFocus value={draftText} onChange={(e) => setDraftText(e.target.value)} onBlur={() => saveEdit(child, group.date)} onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(child, group.date); if (e.key === 'Escape') setEditing(null); }} /> : <ExpandableTaskName text={child.text} className="timeline-expandable-name" onDoubleClick={() => beginEdit(child, group.date)} />}<small>所属主任务：{task.text} · {child.done ? '已完成' : '待完成'}{child.carryCount ? ` · 创建于 ${(child.addedDate || group.date).slice(5).replace('-', '/')} · 顺延 ${child.carryCount} 次` : ''}</small>{tomatoDots(child.pomodoros)}</div>
                     </div>)}
                   </div>}
                 </article>
@@ -357,13 +391,14 @@ function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions
             </div>}
           </section>
         ))}
-        {!groups.length && <div className="timeline-empty all-empty">这个范围还没有任务</div>}
+        {!hasTasks && <div className="timeline-empty all-empty">这个范围还没有任务</div>}
+        </div>
       </div>
     </section>
   );
 }
 
-function SettingsSheet({ open, onClose, durations, opacity, setOpacity, onSave, running }) {
+function SettingsSheet({ open, onClose, durations, opacity, setOpacity, onSave, running, companionPrivacy, onCompanionPrivacyChange }) {
   const [draft, setDraft] = useState(durations);
   useEffect(() => { if (open) setDraft(durations); }, [open, durations]);
   const save = () => onSave(draft);
@@ -387,6 +422,19 @@ function SettingsSheet({ open, onClose, durations, opacity, setOpacity, onSave, 
               <span>窗口透明度<small>{Math.round(opacity * 100)}%</small></span>
               <input className="opacity-slider" type="range" min="65" max="100" value={Math.round(opacity * 100)} onChange={(e) => setOpacity(Number(e.target.value) / 100)} />
             </label>
+            <div className="settings-section-label"><Users size={14} /> 陪伴共享</div>
+            {[
+              ['shareOnline', '共享在线状态', '好友可以知道你是否在桌边'],
+              ['shareTyping', '共享正在输入', '只共享状态，不记录文字和按键'],
+              ['shareActivity', '共享当前活动', '例如正在看书、写作或休息'],
+              ['shareTask', '共享当前任务', '默认关闭，开启后才展示任务名称'],
+              ['shareReactions', '接收互动动画', '允许好友送来番茄、咖啡和猫爪'],
+            ].map(([key, label, note]) => (
+              <label className="setting-toggle" key={key}>
+                <span>{label}<small>{note}</small></span>
+                <input type="checkbox" checked={Boolean(companionPrivacy?.[key])} onChange={(event) => onCompanionPrivacyChange?.(key, event.target.checked)} />
+              </label>
+            ))}
             <div className="sheet-note">{running ? '请结束本次计时，保存的时间将在下次倒计时自动生效。' : '保存后已更新当前倒计时。'}</div>
             <button className="sheet-save" onClick={save}>保存设置</button>
           </motion.aside>
@@ -445,13 +493,17 @@ export default function App() {
   const [paused, setPaused] = useState(false);
   const initialDailyStats = loadJson(localStorage, 'tomato.dailyStats', {});
   const initialTodayStats = dailyStatsForDate(initialDailyStats, localDateKey());
+  const initialTodoState = useMemo(() => rolloverTasksWithHistory({
+    tasks: loadJson(localStorage, 'tomato.tasks', INITIAL_TASKS),
+    history: loadJson(localStorage, 'tomato.dailyTodo', {}),
+    today: localDateKey(),
+  }), []);
   const [completed, setCompleted] = useState(initialTodayStats.edibleTomatoes);
   const [digested, setDigested] = useState(initialTodayStats.digestedTomatoes);
-  const [tasks, setTasks] = useState(() => carryOverTasks(loadJson(localStorage, 'tomato.tasks', INITIAL_TASKS), localDateKey()));
+  const [tasks, setTasks] = useState(initialTodoState.tasks);
   const [focusSessions, setFocusSessions] = useState(() => loadJson(localStorage, 'tomato.focusSessions', {}));
-  const [dailyHistory, setDailyHistory] = useState(() => loadJson(localStorage, 'tomato.dailyTodo', {}));
+  const [dailyHistory, setDailyHistory] = useState(initialTodoState.history);
   const [dailyStats, setDailyStats] = useState(initialDailyStats);
-  const [focusStartedAt, setFocusStartedAt] = useState(null);
   const [notice, setNotice] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [opacity, setOpacity] = useState(() => loadJson(localStorage, 'tomato.opacity', 0.92));
@@ -459,27 +511,45 @@ export default function App() {
     focus: 25, shortBreak: 5, longBreak: 15,
   }));
   const [pendingDurationUpdate, setPendingDurationUpdate] = useState(false);
-  const previousTodayRef = useRef(today);
+  const [companions, setCompanions] = useState(() => (loadJson(localStorage, 'tomato.companions', INITIAL_COMPANIONS) || INITIAL_COMPANIONS).map(normalizeCompanion));
+  const [companionMessages, setCompanionMessages] = useState(() => loadJson(localStorage, 'tomato.companionMessages', INITIAL_COMPANION_MESSAGES) || INITIAL_COMPANION_MESSAGES);
+  const [companionPrivacy, setCompanionPrivacy] = useState(() => ({ ...DEFAULT_COMPANION_PRIVACY, ...(loadJson(localStorage, 'tomato.companionPrivacy', {}) || {}) }));
+  const [companionOpen, setCompanionOpen] = useState(false);
+  const [selectedCompanionId, setSelectedCompanionId] = useState(() => (loadJson(localStorage, 'tomato.companions', INITIAL_COMPANIONS)?.[0]?.id || INITIAL_COMPANIONS[0].id));
+  const [companionNotice, setCompanionNotice] = useState('');
+  const [togetherCompanionId, setTogetherCompanionId] = useState(null);
   const miniDeadlineRef = useRef(null);
   const timerRef = useRef(null);
   const deadlineRef = useRef(null);
+  const togetherCompanionIdRef = useRef(null);
+  const focusStartedAtRef = useRef(null);
+  const focusRunStartedAtRef = useRef(null);
+  const focusActiveSecondsRef = useRef(0);
+  const focusSessionDateRef = useRef(null);
+
+  // "一起专注" is a live session, not durable friend profile data. Repair
+  // stale values saved by earlier versions so a restarted app never appears
+  // to keep a friend trapped in a finished shared session.
+  useEffect(() => {
+    setCompanions((items) => items.map((item) => item.activity === '和你一起专注'
+      ? updateCompanionState(item, 'online')
+      : item));
+  }, []);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
       const next = localDateKey();
       if (next === today) return;
-      setTasks((items) => {
-        const nextItems = carryOverTasks(items, next);
-        setDailyHistory((history) => ({ ...history, [next]: { date: next, tasks: nextItems, edibleTomatoes: dailyStatsForDate(dailyStats, next).edibleTomatoes, digestedTomatoes: dailyStatsForDate(dailyStats, next).digestedTomatoes, focusSessions: focusSessions[next] || [] } }));
-        return nextItems;
-      });
+      const rolled = rolloverTasksWithHistory({ tasks, history: dailyHistory, today: next });
+      setDailyHistory(rolled.history);
+      setTasks(rolled.tasks);
       const nextStats = dailyStatsForDate(dailyStats, next);
       setCompleted(nextStats.edibleTomatoes);
       setDigested(nextStats.digestedTomatoes);
       setToday(next);
     }, 30_000);
     return () => window.clearInterval(interval);
-  }, [today, dailyStats]);
+  }, [today, tasks, dailyHistory, completed, digested, focusSessions, dailyStats]);
 
   const focusSecondsToday = (focusSessions[today] || []).reduce((sum, session) => sum + (Number(session.actualSeconds) || 0), 0);
   const todayFocusLabel = formatDuration(focusSecondsToday);
@@ -506,7 +576,58 @@ export default function App() {
     setSettingsOpen(false);
   };
 
+  const updateCompanion = (id, patch) => setCompanions((items) => items.map((item) => item.id === id ? normalizeCompanion({ ...item, ...patch }) : item));
+  const setTogetherCompanion = (id) => {
+    togetherCompanionIdRef.current = id;
+    setTogetherCompanionId(id);
+  };
+  const clearTogetherCompanion = () => {
+    togetherCompanionIdRef.current = null;
+    setTogetherCompanionId(null);
+  };
+  const endTogetherFocus = (activity = '准备开始', durationLabel = '刚刚') => {
+    const friendId = togetherCompanionIdRef.current;
+    if (!friendId) return;
+    updateCompanion(friendId, { state: 'online', activity, durationLabel });
+    clearTogetherCompanion();
+  };
+
+  const beginFocusSession = (startedAt = Date.now()) => {
+    if (focusStartedAtRef.current == null) {
+      focusStartedAtRef.current = startedAt;
+      focusActiveSecondsRef.current = 0;
+      focusSessionDateRef.current = localDateKey(new Date(startedAt));
+    }
+    focusRunStartedAtRef.current = startedAt;
+  };
+  const pauseFocusSegment = (endedAt = Date.now()) => {
+    focusActiveSecondsRef.current = accumulatedFocusSeconds(focusActiveSecondsRef.current, focusRunStartedAtRef.current, endedAt);
+    focusRunStartedAtRef.current = null;
+  };
+  const clearFocusSession = () => {
+    focusStartedAtRef.current = null;
+    focusRunStartedAtRef.current = null;
+    focusActiveSecondsRef.current = 0;
+    focusSessionDateRef.current = null;
+  };
+  const finishFocusSession = () => {
+    if (mode !== 'focus' || focusStartedAtRef.current == null) return false;
+    const endedAt = Date.now();
+    pauseFocusSegment(endedAt);
+    const seconds = Math.round(focusActiveSecondsRef.current);
+    const startedAt = focusStartedAtRef.current;
+    const sessionDate = focusSessionDateRef.current || today;
+    clearFocusSession();
+    if (!shouldPersistFocusSession(seconds, MINIMUM_FOCUS_SESSION_SECONDS)) return false;
+    setFocusSessions((all) => ({ ...all, [sessionDate]: [...(all[sessionDate] || []), { actualSeconds: seconds, startedAt, endedAt }] }));
+    return true;
+  };
+
   const switchMode = (next) => {
+    if (mode === 'focus') {
+      finishFocusSession();
+      endTogetherFocus();
+    }
     deadlineRef.current = null;
     setMode(next);
     setRemaining(durations[next] * 60);
@@ -515,6 +636,10 @@ export default function App() {
     setPendingDurationUpdate(false);
   };
   const reset = () => {
+    if (mode === 'focus') {
+      finishFocusSession();
+      endTogetherFocus();
+    }
     deadlineRef.current = null;
     setRemaining(modeSeconds);
     setRunning(false);
@@ -522,7 +647,11 @@ export default function App() {
   };
   const startTimer = () => {
     if (running || remaining <= 0) return;
-    if (mode === 'focus' && focusStartedAt == null) setFocusStartedAt(Date.now());
+    if (mode === 'focus') {
+      beginFocusSession();
+      const friendId = togetherCompanionIdRef.current;
+      if (friendId) updateCompanion(friendId, { state: 'focusing', activity: '和你一起专注', durationLabel: '继续专注' });
+    }
     deadlineRef.current = performance.now() + remaining * 1000;
     setPaused(false);
     setRunning(true);
@@ -534,15 +663,13 @@ export default function App() {
       : remainingSecondsAt(deadlineRef.current, performance.now());
     deadlineRef.current = null;
     setRemaining(nextRemaining);
+    if (mode === 'focus') {
+      pauseFocusSegment();
+      const friendId = togetherCompanionIdRef.current;
+      if (friendId) updateCompanion(friendId, { state: 'paused', activity: '等你继续', durationLabel: '暂停中' });
+    }
     setPaused(true);
     setRunning(false);
-  };
-  const finishFocusSession = (actualSeconds) => {
-    if (mode !== 'focus' || !focusStartedAt) return;
-    const seconds = Math.max(0, Math.round(actualSeconds));
-    if (!seconds) return;
-    setFocusSessions((all) => ({ ...all, [today]: [...(all[today] || []), { actualSeconds: seconds, startedAt: focusStartedAt, endedAt: Date.now() }] }));
-    setFocusStartedAt(null);
   };
   const toggleRunning = useCallback(() => {
     if (running) pauseTimer();
@@ -550,19 +677,81 @@ export default function App() {
   }, [running, remaining]);
   const skip = () => switchMode(nextMode(mode, completed));
 
+  const changeCompanionState = (id, state) => {
+    const isActiveTogether = id === togetherCompanionIdRef.current;
+    if (isActiveTogether && state !== 'focusing') clearTogetherCompanion();
+    setCompanions((items) => items.map((item) => item.id === id
+      ? updateCompanionState(item, state, state === 'typing' ? '正在敲键盘' : '')
+      : item));
+  };
+  const flashCompanionNotice = (text) => {
+    setCompanionNotice(text);
+    window.clearTimeout(flashCompanionNotice.timer);
+    flashCompanionNotice.timer = window.setTimeout(() => setCompanionNotice(''), 2400);
+  };
+  const sendCompanionReaction = (friendId, type) => {
+    const friend = companions.find((item) => item.id === friendId);
+    const reaction = COMPANION_REACTIONS[type];
+    if (!friend || !reaction || companionPrivacy.shareReactions === false) return;
+    setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', kind: 'reaction', text: `${reaction.emoji} ${reaction.text}`, createdAt: '刚刚' }));
+    flashCompanionNotice(`已送给${friend.name}${reaction.text}`);
+  };
+  const sendCompanionMessage = (friendId, text) => {
+    const friend = companions.find((item) => item.id === friendId);
+    const trimmed = String(text || '').trim();
+    if (!friend || !trimmed) return;
+    setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', text: trimmed, createdAt: '刚刚' }));
+    flashCompanionNotice(`留言已送达${friend.name}`);
+  };
+  const sendCompanionQuickMessage = (friendId, text) => sendCompanionMessage(friendId, text);
+  const startTogetherFocus = (friendId) => {
+    const friend = companions.find((item) => item.id === friendId);
+    if (!friend || friend.state === 'offline') return;
+    const wasTogether = togetherCompanionIdRef.current === friendId;
+    if (togetherCompanionIdRef.current && !wasTogether) endTogetherFocus();
+    if (!(running && mode === 'focus')) {
+      const nextRemaining = mode === 'focus' ? remaining : durations.focus * 60;
+      if (nextRemaining <= 0) return;
+      deadlineRef.current = performance.now() + nextRemaining * 1000;
+      setMode('focus');
+      setRemaining(nextRemaining);
+      beginFocusSession();
+      setPaused(false);
+      setRunning(true);
+    }
+    setTogetherCompanion(friendId);
+    updateCompanion(friendId, { state: 'focusing', activity: '和你一起专注', durationLabel: '刚刚开始', unread: 0 });
+    if (!wasTogether) setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', kind: 'reaction', text: `🪑 和${friend.name}一起坐下，开始专注`, createdAt: '刚刚' }));
+    flashCompanionNotice(wasTogether ? `你和${friend.name}继续一起专注。` : `你和${friend.name}已经一起坐下，开始专注。`);
+  };
+  const primaryFriend = primaryCompanion(companions);
+  const selectCompanion = (id) => {
+    setSelectedCompanionId(id);
+    setCompanions((items) => items.map((item) => item.id === id ? { ...item, unread: 0 } : item));
+  };
+
   const toggleTask = (task, parentId = null, targetDate = today) => {
     if (targetDate !== today) {
       setDailyHistory((history) => {
         const day = history[targetDate];
         if (!day) return history;
-        const available = (day.edibleTomatoes || 0) - (day.digestedTomatoes || 0);
+        const available = Math.max(0, (day.edibleTomatoes || 0) - (day.digestedTomatoes || 0));
         const update = (items) => items.map((item) => {
-          if (parentId && item.id === parentId) return toggleSubtaskCompletion(item, task.id);
-          if (!parentId && item.id === task.id) return task.done ? { ...item, done: false, subtasks: item.subtasks.map((subtask) => ({ ...subtask, done: false })) } : completeTaskTree(item);
+          if (parentId && item.id === parentId) return toggleSubtaskCompletion(item, task.id, new Date(`${targetDate}T12:00:00`).toISOString());
+          if (!parentId && item.id === task.id) {
+            const normalized = normalizeTask(item, targetDate);
+            return task.done
+              ? reopenTaskTree(normalized)
+              : completeTaskTree(normalized, new Date(`${targetDate}T12:00:00`).toISOString());
+          }
           return item;
         });
-        const amount = parentId ? normalizePomodoros(task.pomodoros) : summarizeTaskTree(task).pomodoros - summarizeTaskTree(task).digested;
         const nextDone = !task.done;
+        const amount = parentId
+          ? normalizePomodoros(task.pomodoros)
+          : nextDone
+            ? summarizeTaskTree(task).pomodoros - summarizeTaskTree(task).digested
+            : summarizeTaskTree(task).digested;
         if (nextDone && amount > available) {
           setNotice('该日期可消化番茄不足，无法补完成任务。');
           return history;
@@ -589,13 +778,13 @@ export default function App() {
       } else {
         setDigested((value) => Math.max(0, value - amount));
       }
-      setTasks((list) => list.map((item) => item.id !== parentId ? item : toggleSubtaskCompletion(item, task.id)));
+      setTasks((list) => list.map((item) => item.id !== parentId ? item : toggleSubtaskCompletion(item, task.id, new Date().toISOString())));
       setNotice(nextDone ? `子任务“${task.text}”已完成，番茄已消化。` : '已取消子任务完成，番茄已退回今日可用数量。');
       return;
     }
     if (task.done) {
       const amount = summarizeTaskTree(task).digested;
-      setTasks((list) => list.map((item) => item.id === task.id ? { ...item, done: false, subtasks: item.subtasks.map((subtask) => ({ ...subtask, done: false })) } : item));
+      setTasks((list) => list.map((item) => item.id === task.id ? reopenTaskTree(item) : item));
       setDigested((value) => Math.max(0, value - amount));
       setNotice('已取消任务完成，番茄已退回今日可用数量。');
       return;
@@ -607,7 +796,7 @@ export default function App() {
       window.setTimeout(() => setNotice(''), 2800);
       return;
     }
-    setTasks((list) => list.map((item) => item.id === task.id ? completeTaskTree(item) : item));
+    setTasks((list) => list.map((item) => item.id === task.id ? completeTaskTree(item, new Date().toISOString()) : item));
     setDigested((value) => value + result.amount);
     setNotice(result.amount === 0 ? '任务已完成。' : `任务已完成，消化 ${result.amount} 个番茄。`);
     window.setTimeout(() => setNotice(''), 2200);
@@ -666,7 +855,8 @@ export default function App() {
       setRemaining((value) => Math.min(value, nextRemaining));
       if (nextRemaining > 0) return;
 
-      finishFocusSession((durations[mode] || 0) * 60);
+      finishFocusSession();
+      if (mode === 'focus') endTogetherFocus('完成一轮专注', '刚刚完成');
       window.clearInterval(intervalId);
       timerRef.current = null;
       deadlineRef.current = null;
@@ -690,8 +880,17 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event) => {
-      if (event.code === 'Space' && !settingsOpen) { event.preventDefault(); toggleRunning(); }
-      if (event.key.toLowerCase() === 'r' && !settingsOpen) reset();
+      const target = event.target;
+      const isTextEntry = target instanceof HTMLElement && (
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+        || target.isContentEditable
+      );
+      if (isTextEntry || settingsOpen || event.repeat) return;
+      if ((event.code === 'Space' || event.key === ' ') && !settingsOpen) {
+        event.preventDefault();
+        toggleRunning();
+      }
+      if (event.key?.toLowerCase() === 'r' && !settingsOpen) reset();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -716,6 +915,9 @@ export default function App() {
   }, [tasks, completed, digested, today, focusSessions]);
   useEffect(() => { saveJson(localStorage, 'tomato.dailyTodo', dailyHistory); }, [dailyHistory]);
   useEffect(() => { saveJson(localStorage, 'tomato.durations', durations); }, [durations]);
+  useEffect(() => { saveJson(localStorage, 'tomato.companions', companions); }, [companions]);
+  useEffect(() => { saveJson(localStorage, 'tomato.companionMessages', companionMessages); }, [companionMessages]);
+  useEffect(() => { saveJson(localStorage, 'tomato.companionPrivacy', companionPrivacy); }, [companionPrivacy]);
   useEffect(() => {
     saveJson(localStorage, 'tomato.opacity', opacity);
     window.tomatoDesktop?.setOpacity(opacity);
@@ -776,6 +978,9 @@ export default function App() {
           <TasksPanel tasks={tasks} setTasks={setTasks} onToggleTask={toggleTask} notice={notice} today={today} />
         </main>
       )}
+      <CompanionPet companion={primaryFriend} open={companionOpen} onClick={() => { setCompanionOpen((value) => !value); setSelectedCompanionId(primaryFriend.id); }} />
+      <CompanionPanel open={companionOpen} companions={companions} selectedId={selectedCompanionId} messages={companionMessages} togetherId={togetherCompanionId} onSelect={selectCompanion} onClose={() => setCompanionOpen(false)} onReaction={sendCompanionReaction} onSendMessage={sendCompanionMessage} onQuickMessage={sendCompanionQuickMessage} onChangeState={changeCompanionState} onStartTogether={startTogetherFocus} />
+      {companionNotice && <div className="companion-toast" role="status">{companionNotice}</div>}
       <footer className="bottom-bar glass-line">
         <div className="today-focus"><span>今日专注</span><strong>{todayFocusLabel}</strong></div>
         <div><span>已食用</span><strong>{completed}</strong></div>
@@ -787,7 +992,7 @@ export default function App() {
           <button onClick={() => setSettingsOpen(true)}><Settings size={15} /> 设置</button>
         </div>
       </footer>
-      <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} durations={durations} opacity={opacity} setOpacity={setOpacity} onSave={saveDurations} running={running} />
+      <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} durations={durations} opacity={opacity} setOpacity={setOpacity} onSave={saveDurations} running={running} companionPrivacy={companionPrivacy} onCompanionPrivacyChange={(key, value) => setCompanionPrivacy((privacy) => ({ ...privacy, [key]: value }))} />
     </div>
   );
 }

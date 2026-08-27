@@ -70,6 +70,7 @@ test('计时状态只能由主窗口发布，小窗不能反向发送默认时�
 
 test('软件品牌名称为 JJtomato', () => {
   assert.equal(pkg.name, 'jjtomato');
+  assert.equal(pkg.version, '0.1.20');
   assert.match(app, />JJtomato</);
   assert.match(main, /title: 'JJtomato'/);
 });
@@ -99,7 +100,7 @@ test('生产 CSS 不依赖网络字体', () => {
 
 test('专注支持暂停后继续，任务番茄数量可编辑', () => {
   assert.match(app, /const pauseTimer = \(\) =>/);
-  assert.match(app, /paused \? '继续专注'/);
+  assert.match(app, /paused \? isFocus \? '继续专注' : '继续休息'/);
   assert.match(app, /className="pomodoro-editor"/);
   assert.match(app, /aria-label="番茄数量"/);
   assert.match(app, /updatePomodoros/);
@@ -116,14 +117,21 @@ test('任务完成会按番茄数消化库存，并支持今日 Todo Markdown �
   assert.match(app, /min="0"/);
 });
 
-test('Todo 总览提供番茄风甘特时间轴和跨日来源标记', () => {
+test('Todo 总览提供日历计划视图和跨日来源标记', () => {
   assert.match(app, /Todo 总览/);
-  assert.match(app, /className="gantt"/);
-  assert.match(app, /添加于 \{task\.addedDate\}/);
+  assert.match(app, /plan-calendar-note/);
+  assert.match(app, /创建于/);
   assert.match(app, /顺延 \$\{task\.carryCount\} 次/);
-  assert.match(app, /carryOverTasks/);
-  assert.match(css, /\.gantt-bar/);
-  assert.match(css, /\.todo-overview/);
+  assert.match(app, /rolloverTasksWithHistory/);
+  assert.match(css, /\.plan-calendar-grid/);
+  assert.doesNotMatch(app, /普通甘特图/);
+});
+
+test('专注记录仅累计运行片段，并在暂停或完成时按实际时长结算', () => {
+  assert.match(app, /focusActiveSecondsRef/);
+  assert.match(app, /pauseFocusSegment\(\)/);
+  assert.match(app, /finishFocusSession\(\)/);
+  assert.match(app, /shouldPersistFocusSession\(seconds, MINIMUM_FOCUS_SESSION_SECONDS\)/);
 });
 
 test('Todo 总览支持月/周/日切换、日期导航和多日期导出', () => {
@@ -132,19 +140,26 @@ test('Todo 总览支持月/周/日切换、日期导航和多日期导出', () =
   assert.match(app, /item === 'week' \? '周'/);
   assert.match(app, /item === 'week' \? '周' : '日'/);
   assert.match(app, /selectedDates/);
-  assert.match(app, /导出已选日期/);
+  assert.match(app, /导出日期/);
   assert.match(app, /buildMultiDayMarkdown/);
-  assert.match(css, /\.date-navigator/);
-  assert.match(css, /\.export-dates/);
+  assert.match(css, /\.vertical-date-nav/);
+  assert.match(css, /\.vertical-export-row/);
 });
 
 test('Todo 总览使用竖向时间轴而不是日期表格', () => {
   assert.match(app, /function VerticalTodoOverview/);
-  assert.match(app, /className="vertical-timeline"/);
+  assert.match(app, /className="vertical-timeline plan-calendar-shell"/);
   assert.match(app, /className={`timeline-day/);
   assert.match(app, /className={`timeline-task/);
   assert.match(css, /\.vertical-timeline::before/);
   assert.match(css, /\.timeline-task/);
+});
+
+test('Todo 总览按日历分栏，周视图用于安排，月视图用于回顾', () => {
+  assert.match(app, /plan-calendar-note/);
+  assert.match(app, /className=\{`plan-calendar-grid \$\{range\}`\}/);
+  assert.match(css, /\.plan-calendar-grid\.week/);
+  assert.match(css, /\.plan-calendar-grid\.month/);
 });
 
 test('Todo 总览使用统一时间轴分组逻辑，当前顺延任务覆盖历史快照', () => {
@@ -210,6 +225,15 @@ test('任务复选框使用 flex 居中并且 Todo 子任务使用父子层级�
   assert.match(css, /border-left:\s*2px/);
 });
 
+test('长任务名称支持省略提示和点击展开，并限制在任务卡片内', () => {
+  assert.match(app, /function ExpandableTaskName/);
+  assert.match(app, /点击展开完整名称/);
+  assert.match(app, /aria-expanded=\{expanded\}/);
+  assert.match(css, /\.expandable-task-name/);
+  assert.match(css, /-webkit-line-clamp:\s*2/);
+  assert.match(css, /max-height:\s*min\(7em, 30vh\)/);
+});
+
 test('主任务和 Todo 日期组支持折叠子任务', () => {
   assert.match(app, /collapse-toggle/);
   assert.match(app, /timeline-collapse/);
@@ -228,6 +252,12 @@ test('计时设置保存后空闲计时器立即更新，运行中显示下次�
   assert.match(app, /保存后已更新当前倒计时/);
   assert.match(app, /请结束本次计时/);
   assert.match(app, /pendingDurationUpdate/);
+});
+
+test('空格快捷键忽略输入框、设置面板和按键自动重复', () => {
+  assert.match(app, /event\.repeat/);
+  assert.match(app, /isTextEntry/);
+  assert.match(app, /event\.code === 'Space'/);
 });
 
 test('专注台主任务完成状态由 task-group 驱动绿色对勾和删除线', () => {
@@ -249,4 +279,84 @@ test('长休小窗使用与其他模式一致的填色杯子图案', () => {
   assert.match(app, /<i \/><b \/><em \/>/);
   assert.match(css, /\.coffee-mark::before[^}]*background:/s);
   assert.match(css, /\.coffee-mark b[^}]*border:/s);
+});
+
+test('v0.1.18 提供桌边陪伴小猫和好友状态面板', () => {
+  assert.match(app, /function CompanionPet/);
+  assert.match(app, /function CompanionPanel/);
+  assert.match(app, /className="companion-pet/);
+  assert.match(app, /className="companion-panel/);
+  assert.match(app, /正在输入/);
+  assert.match(css, /\.companion-pet\.state-typing/);
+  assert.match(css, /companion-cat-type/);
+});
+
+test('陪伴支持送番茄、快捷互动和短消息', () => {
+  assert.match(app, /sendCompanionReaction/);
+  assert.match(app, /送番茄/);
+  assert.match(app, /递咖啡/);
+  assert.match(app, /轻敲猫爪/);
+  assert.match(app, /快捷留言/);
+  assert.match(app, /onQuickMessage/);
+  assert.match(app, /kind === 'reaction'/);
+  assert.match(app, /陪伴留言/);
+  assert.match(app, /maxLength=\{300\}/);
+  assert.match(app, /sendCompanionMessage/);
+});
+
+test('陪伴面板可以本地发起一起坐下并立即开始专注', () => {
+  assert.match(app, /startTogetherFocus/);
+  assert.match(app, /和\$\{selected\.name\}一起坐下/);
+  assert.match(app, /disabled=\{selected\.state === 'offline' \|\| \(isTogether && !isPausedTogether\)\}/);
+  assert.match(app, /正在一起专注/);
+  assert.match(app, /activity: '和你一起专注'/);
+  assert.match(app, /setMode\('focus'\)/);
+  assert.match(app, /setRunning\(true\)/);
+  assert.match(css, /\.companion-together\s*\{/);
+});
+
+test('共同专注会随着暂停、继续、取消和完成实时收尾', () => {
+  assert.match(app, /const togetherCompanionIdRef = useRef\(null\)/);
+  assert.match(app, /const endTogetherFocus = \(activity = '准备开始', durationLabel = '刚刚'/);
+  assert.match(app, /activity: '等你继续', durationLabel: '暂停中'/);
+  assert.match(app, /activity: '和你一起专注', durationLabel: '继续专注'/);
+  assert.match(app, /endTogetherFocus\('完成一轮专注', '刚刚完成'\)/);
+  assert.match(app, /const isPausedTogether = isTogether && selected\?\.state === 'paused'/);
+  assert.match(app, /updateCompanionState\(item, state, state === 'typing' \? '正在敲键盘' : ''\)/);
+  assert.match(app, /const reset = \(\) => \{\s*if \(mode === 'focus'\) \{\s*finishFocusSession\(\);\s*endTogetherFocus\(\);/s);
+  assert.match(app, /const switchMode = \(next\) => \{\s*if \(mode === 'focus'\) \{\s*finishFocusSession\(\);\s*endTogetherFocus\(\);/s);
+});
+
+test('陪伴隐私设置覆盖在线、输入、活动、任务和互动', () => {
+  assert.match(app, /shareOnline/);
+  assert.match(app, /shareTyping/);
+  assert.match(app, /shareActivity/);
+  assert.match(app, /shareTask/);
+  assert.match(app, /shareReactions/);
+  assert.match(app, /tomato\.companionPrivacy/);
+  assert.match(css, /\.setting-toggle/);
+});
+
+test('好友列表会按实际人数收缩，并在人数较多时才限制滚动高度', () => {
+  assert.match(css, /\.companion-friend-list\s*\{[^}]*display:\s*grid/s);
+  assert.match(css, /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(app, /count-\$\{friendListSize\}/);
+  assert.match(css, /\.companion-friend-list\.count-1\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(css, /\.companion-friend-list\.count-many\s*\{[^}]*224px/s);
+  assert.match(css, /max-height:\s*224px/);
+  assert.match(css, /-webkit-line-clamp:\s*2/);
+});
+
+test('陪伴消息在消息数量不变时也会跟随最新消息滚动到底部', () => {
+  assert.match(app, /const messageListRef = useRef\(null\)/);
+  assert.match(app, /const latestMessageId = selectedMessages\.at\(-1\)\?\.id/);
+  assert.match(app, /messageListRef\.current\.scrollTop = messageListRef\.current\.scrollHeight/);
+  assert.match(app, /\[selected\?\.id, latestMessageId\]/);
+  assert.match(app, /className="companion-messages" ref=\{messageListRef\}/);
+});
+
+test('好友状态与上线时间在同一信息列内换行，避免卡片文字重叠', () => {
+  assert.match(app, /companion-friend-copy[\s\S]*?<em>\{friend\.durationLabel\}<\/em>/);
+  assert.match(css, /\.companion-friend-copy > em\s*\{[^}]*display:\s*block/s);
+  assert.doesNotMatch(css, /\.companion-friend > em\s*\{[^}]*position:\s*absolute/s);
 });

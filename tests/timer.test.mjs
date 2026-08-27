@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TimerState, MODES, nextMode, formatTime, progressOf, remainingSecondsAt } from '../src/core/timer.mjs';
+import { TimerState, MODES, MINIMUM_FOCUS_SESSION_SECONDS, accumulatedFocusSeconds, nextMode, formatTime, progressOf, remainingSecondsAt, shouldPersistFocusSession } from '../src/core/timer.mjs';
 
 test('阶段配置包含专注、短休、长休且时长正确', () => {
   assert.equal(MODES.focus.seconds, 25 * 60);
@@ -46,4 +46,14 @@ test('剩余时间根据单调时钟计算，时间向前时不会回跳增加',
   assert.ok(remainingSecondsAt(deadline, 4_501) <= remainingSecondsAt(deadline, 4_500));
   assert.equal(remainingSecondsAt(deadline, 25_000), 0);
   assert.equal(remainingSecondsAt(deadline, 30_000), 0);
+});
+
+test('专注会话只累计运行片段，并忽略不足一分钟的误触', () => {
+  const afterFirstRun = accumulatedFocusSeconds(0, 1_000, 21_000);
+  const afterResume = accumulatedFocusSeconds(afterFirstRun, 61_000, 111_000);
+  assert.equal(afterFirstRun, 20);
+  assert.equal(afterResume, 70);
+  assert.equal(shouldPersistFocusSession(59), false);
+  assert.equal(shouldPersistFocusSession(MINIMUM_FOCUS_SESSION_SECONDS), true);
+  assert.equal(accumulatedFocusSeconds(20, 200, 100), 20);
 });

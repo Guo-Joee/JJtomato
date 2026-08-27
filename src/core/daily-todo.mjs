@@ -40,17 +40,20 @@ export function normalizePomodoros(value, fallback = 0) {
 }
 
 export function normalizeTask(task, today = localDateKey()) {
-  const addedDate = task.addedDate || today;
+  const isDateKey = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) && !Number.isNaN(new Date(`${value}T12:00:00`).getTime());
+  const plannedDate = isDateKey(task.plannedDate) ? task.plannedDate : today;
+  const addedDate = isDateKey(task.addedDate) ? task.addedDate : plannedDate;
   const subtasks = Array.isArray(task.subtasks)
-    ? task.subtasks.map((subtask) => normalizeTask(subtask, task.plannedDate || today))
+    ? task.subtasks.map((subtask) => normalizeTask(subtask, plannedDate))
     : [];
   return {
     ...task,
     addedDate,
-    plannedDate: task.plannedDate || today,
+    plannedDate,
     carryCount: Number.isFinite(task.carryCount) ? task.carryCount : 0,
     pomodoros: normalizePomodoros(task.pomodoros, 0),
     done: Boolean(task.done),
+    completedAt: task.done && typeof task.completedAt === 'string' ? task.completedAt : null,
     subtasks,
   };
 }
@@ -73,15 +76,24 @@ export function addSubtask(task, subtask) {
   return { ...parent, pomodoros: 0, subtasks: [...parent.subtasks, child] };
 }
 
-export function completeTaskTree(task) {
+export function completeTaskTree(task, completedAt = null) {
   const normalized = normalizeTask(task);
-  return { ...normalized, done: true, subtasks: normalized.subtasks.map((subtask) => completeTaskTree(subtask)) };
+  const completionTime = completedAt || normalized.completedAt;
+  return { ...normalized, done: true, completedAt: completionTime, subtasks: normalized.subtasks.map((subtask) => completeTaskTree(subtask, completionTime)) };
 }
 
-export function toggleSubtaskCompletion(task, subtaskId) {
+export function reopenTaskTree(task) {
   const normalized = normalizeTask(task);
-  const subtasks = normalized.subtasks.map((subtask) => subtask.id === subtaskId ? { ...subtask, done: !subtask.done } : subtask);
-  return { ...normalized, subtasks, done: subtasks.length > 0 && subtasks.every((subtask) => subtask.done) };
+  return { ...normalized, done: false, completedAt: null, subtasks: normalized.subtasks.map(reopenTaskTree) };
+}
+
+export function toggleSubtaskCompletion(task, subtaskId, completedAt = null) {
+  const normalized = normalizeTask(task);
+  const subtasks = normalized.subtasks.map((subtask) => subtask.id === subtaskId
+    ? { ...subtask, done: !subtask.done, completedAt: subtask.done ? null : completedAt }
+    : subtask);
+  const done = subtasks.length > 0 && subtasks.every((subtask) => subtask.done);
+  return { ...normalized, subtasks, done, completedAt: done ? completedAt : null };
 }
 
 export function carryOverTaskTree(task, today = localDateKey()) {
@@ -95,8 +107,70 @@ export function carryOverTaskTree(task, today = localDateKey()) {
   };
 }
 
+function taskForTimelineDate(task, date) {
+  const normalized = normalizeTask(task, date);
+  // A completed item belongs to the day it was completed. It must not be
+  // reintroduced by a later daily snapshot.
+  if (normalized.done && normalized.plannedDate < date) return null;
+  const subtasks = normalized.subtasks
+    .map((subtask) => taskForTimelineDate(subtask, date))
+    .filter(Boolean);
+  return { ...normalized, subtasks };
+}
+
 export function carryOverTasks(tasks, today = localDateKey()) {
-  return tasks.map((task) => carryOverTaskTree(task, today));
+  return tasks
+    .map((task) => taskForTimelineDate(carryOverTaskTree(task, today), today))
+    .filter(Boolean);
+}
+
+function addMissingHistoricalTask(history, date, task) {
+  const day = history[date] || { date, tasks: [], edibleTomatoes: 0, digestedTomatoes: 0, focusSessions: [] };
+  if ((day.tasks || []).some((item) => String(item.id) === String(task.id))) return history;
+  return { ...history, [date]: { ...day, date, tasks: [...(day.tasks || []), task] } };
+}
+
+function completedDateForTask(task, fallbackDate) {
+  const parsed = task.completedAt ? new Date(task.completedAt) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? localDateKey(parsed) : fallbackDate;
+}
+
+/**
+ * Move live tasks to a new day without losing the missing daily snapshots.
+ * Earlier snapshots always win: editing a historical day must never be
+ * overwritten when the app is opened again several days later.
+ */
+export function rolloverTasksWithHistory({ tasks = [], history = {}, today = localDateKey() }) {
+  let nextHistory = { ...history };
+  const nextTasks = [];
+
+  tasks.forEach((rawTask) => {
+    let liveTask = normalizeTask(rawTask, today);
+    if (liveTask.plannedDate >= today) {
+      nextTasks.push(liveTask);
+      return;
+    }
+
+    if (liveTask.done) {
+      const completedDate = completedDateForTask(liveTask, liveTask.plannedDate);
+      if (completedDate < today) nextHistory = addMissingHistoricalTask(nextHistory, completedDate, liveTask);
+      return;
+    }
+
+    let snapshotDate = liveTask.plannedDate;
+    while (snapshotDate < today) {
+      const snapshot = taskForTimelineDate(liveTask, snapshotDate);
+      if (snapshot) nextHistory = addMissingHistoricalTask(nextHistory, snapshotDate, snapshot);
+      const nextDate = shiftDate(snapshotDate, 1);
+      liveTask = carryOverTaskTree(liveTask, nextDate);
+      snapshotDate = nextDate;
+    }
+
+    const currentTask = taskForTimelineDate(liveTask, today);
+    if (currentTask) nextTasks.push(currentTask);
+  });
+
+  return { tasks: nextTasks, history: nextHistory };
 }
 
 export function flattenTaskTree(task, date, parentText = null) {
@@ -151,15 +225,24 @@ export function updateTaskInTree(tasks, targetId, updater) {
 
 export function buildTimelineTaskGroups({ history = {}, currentTasks = [], today, days = [] }) {
   const byId = new Map();
-  Object.values(history).forEach((day) => {
+  // A task can legitimately appear on several dates: every rollover is a
+  // historical record, while the live task is the next scheduled instance.
+  // Keying by id alone made the latest snapshot overwrite all earlier days.
+  Object.entries(history).forEach(([historyDate, day]) => {
     (day.tasks || []).forEach((task) => {
-      const row = flattenTaskTree(task, day.date)[0];
-      byId.set(String(row.id), { ...row, timelineDate: row.plannedDate || day.date });
+      const recordDate = day.date || historyDate;
+      const visibleTask = taskForTimelineDate(task, recordDate);
+      if (!visibleTask) return;
+      const row = flattenTaskTree(visibleTask, recordDate)[0];
+      byId.set(`${String(row.id)}:${recordDate}`, { ...row, timelineDate: recordDate, historyDate: recordDate });
     });
   });
   currentTasks.forEach((task) => {
-    const row = flattenTaskTree(task, today)[0];
-    byId.set(String(row.id), { ...row, timelineDate: row.plannedDate || today });
+    const visibleTask = taskForTimelineDate(task, today);
+    if (!visibleTask) return;
+    const row = flattenTaskTree(visibleTask, today)[0];
+    const timelineDate = row.plannedDate || today;
+    byId.set(`${String(row.id)}:${timelineDate}`, { ...row, timelineDate });
   });
   return days.map((date) => ({ date, tasks: [...byId.values()].filter((task) => task.timelineDate === date) }));
 }

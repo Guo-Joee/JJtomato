@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDailyTodoMarkdown, buildMultiDayMarkdown, buildTimelineTaskGroups, carryOverTasks, consumeTaskTomatoes, dailyStatsForDate, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate, addSubtask, completeTaskTree, carryOverTaskTree, summarizeTaskTree, flattenTaskTree, formatDuration, summarizeDay, toggleSubtaskCompletion, updateTaskInTree } from '../src/core/daily-todo.mjs';
+import { buildDailyTodoMarkdown, buildMultiDayMarkdown, buildTimelineTaskGroups, carryOverTasks, consumeTaskTomatoes, dailyStatsForDate, daysForRange, localDateKey, moveRangeAnchor, normalizePomodoros, shiftDate, addSubtask, completeTaskTree, carryOverTaskTree, rolloverTasksWithHistory, summarizeTaskTree, flattenTaskTree, formatDuration, reopenTaskTree, summarizeDay, toggleSubtaskCompletion, updateTaskInTree } from '../src/core/daily-todo.mjs';
 
 test('主任务树可以展开为带主任务名称的历史回顾记录', () => {
   const rows = flattenTaskTree({ id: 1, text: '复习通信协议', subtasks: [{ id: 2, text: 'IIC', done: true, parentId: 1 }] }, '2026-08-18');
@@ -108,6 +108,78 @@ test('8/17 未完成任务顺延后出现在 8/18，历史快照不会覆盖当�
   assert.equal(groups[1].tasks[0].plannedDate, '2026-08-18');
 });
 
+test('同一任务连续顺延时保留每一天的历史记录', () => {
+  const task = (date) => ({ id: 17, text: '连续推进的任务', done: false, pomodoros: 1, plannedDate: date, addedDate: '2026-08-16', subtasks: [] });
+  const groups = buildTimelineTaskGroups({
+    history: {
+      '2026-08-16': { date: '2026-08-16', tasks: [task('2026-08-16')] },
+      '2026-08-17': { date: '2026-08-17', tasks: [task('2026-08-17')] },
+    },
+    currentTasks: [task('2026-08-18')],
+    today: '2026-08-18',
+    days: ['2026-08-16', '2026-08-17', '2026-08-18'],
+  });
+  assert.deepEqual(groups.map((group) => group.tasks.map((item) => item.timelineDate)), [
+    ['2026-08-16'], ['2026-08-17'], ['2026-08-18'],
+  ]);
+});
+
+test('已完成任务不会被顺延到下一天或在下一天历史快照中重复显示', () => {
+  const finished = { id: 18, text: '已完成任务', done: true, pomodoros: 1, plannedDate: '2026-08-25', subtasks: [] };
+  assert.deepEqual(carryOverTasks([finished], '2026-08-26'), []);
+  const groups = buildTimelineTaskGroups({
+    history: {
+      '2026-08-25': { date: '2026-08-25', tasks: [finished] },
+      '2026-08-26': { date: '2026-08-26', tasks: [finished] },
+    },
+    currentTasks: [],
+    today: '2026-08-26',
+    days: ['2026-08-25', '2026-08-26'],
+  });
+  assert.equal(groups[0].tasks.length, 1);
+  assert.equal(groups[1].tasks.length, 0);
+});
+
+test('跨多天再次启动时补齐未完成任务的每一天历史快照', () => {
+  const rolled = rolloverTasksWithHistory({
+    tasks: [{ id: 88, text: '连续推进的任务', done: false, pomodoros: 1, plannedDate: '2026-08-25', addedDate: '2026-08-25', subtasks: [] }],
+    history: {},
+    today: '2026-08-28',
+  });
+  assert.deepEqual(Object.keys(rolled.history).sort(), ['2026-08-25', '2026-08-26', '2026-08-27']);
+  assert.deepEqual(rolled.tasks.map((task) => ({ plannedDate: task.plannedDate, carryCount: task.carryCount })), [{ plannedDate: '2026-08-28', carryCount: 3 }]);
+});
+
+test('补历史快照不会覆盖用户已经编辑过的旧日期记录', () => {
+  const rolled = rolloverTasksWithHistory({
+    tasks: [{ id: 89, text: '当前名称', done: false, pomodoros: 1, plannedDate: '2026-08-25', subtasks: [] }],
+    history: { '2026-08-25': { date: '2026-08-25', tasks: [{ id: 89, text: '历史名称', done: false, pomodoros: 1, plannedDate: '2026-08-25', subtasks: [] }] } },
+    today: '2026-08-27',
+  });
+  assert.equal(rolled.history['2026-08-25'].tasks[0].text, '历史名称');
+  assert.equal(rolled.history['2026-08-26'].tasks[0].text, '当前名称');
+});
+
+test('已完成任务按完成日期归档，不会在之后继续成为当前任务', () => {
+  const rolled = rolloverTasksWithHistory({
+    tasks: [{ id: 90, text: '昨晚完成', done: true, completedAt: '2026-08-26T12:00:00.000Z', pomodoros: 1, plannedDate: '2026-08-25', subtasks: [] }],
+    history: {},
+    today: '2026-08-28',
+  });
+  assert.equal(rolled.tasks.length, 0);
+  assert.equal(rolled.history['2026-08-26'].tasks[0].id, 90);
+  assert.equal(rolled.history['2026-08-25'], undefined);
+});
+
+test('完成和取消完成会写入或清除完成时间', () => {
+  const completed = completeTaskTree({ id: 91, text: '任务', done: false, subtasks: [{ id: 92, text: '子任务', done: false }] }, '2026-08-27T12:00:00.000Z');
+  assert.equal(completed.completedAt, '2026-08-27T12:00:00.000Z');
+  assert.equal(completed.subtasks[0].completedAt, '2026-08-27T12:00:00.000Z');
+  const reopened = reopenTaskTree(completed);
+  assert.equal(reopened.completedAt, null);
+  assert.equal(reopened.subtasks[0].completedAt, null);
+});
+
 test('历史 Todo 可以通过 ID 更新嵌套主任务或子任务名称和状态', () => {
   const tasks = [{ id: 1, text: '主任务', done: false, subtasks: [{ id: 2, text: '子任务', done: false }] }];
   const renamed = updateTaskInTree(tasks, 2, (task) => ({ ...task, text: '改名后的子任务', done: true }));
@@ -158,7 +230,7 @@ test('未完成任务跨日自动顺延，并保留原始添加日期', () => {
   assert.equal(shiftDate('2026-08-17', 1), '2026-08-18');
 });
 
-test('甘特图支持日、周、月范围切换和日期移动', () => {
+test('计划视图支持日、周、月范围切换和日期移动', () => {
   assert.equal(daysForRange('day', '2026-08-17').length, 1);
   assert.equal(daysForRange('week', '2026-08-17').length, 7);
   assert.equal(daysForRange('month', '2026-08-17').length, 31);

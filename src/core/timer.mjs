@@ -35,6 +35,18 @@ export function remainingSecondsAt(deadline, now) {
   return Math.max(0, Math.ceil((deadline - now) / 1000));
 }
 
+export const MINIMUM_FOCUS_SESSION_SECONDS = 60;
+
+export function accumulatedFocusSeconds(activeSeconds, segmentStartedAt, now) {
+  const previous = Math.max(0, Number(activeSeconds) || 0);
+  if (!Number.isFinite(segmentStartedAt) || !Number.isFinite(now)) return previous;
+  return previous + Math.max(0, (now - segmentStartedAt) / 1000);
+}
+
+export function shouldPersistFocusSession(seconds, minimum = MINIMUM_FOCUS_SESSION_SECONDS) {
+  return Math.max(0, Number(seconds) || 0) >= minimum;
+}
+
 export class TimerState {
   constructor() {
     this.mode = 'focus';
