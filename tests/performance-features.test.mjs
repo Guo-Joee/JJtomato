@@ -70,7 +70,7 @@ test('计时状态只能由主窗口发布，小窗不能反向发送默认时�
 
 test('软件品牌名称为 JJtomato', () => {
   assert.equal(pkg.name, 'jjtomato');
-  assert.equal(pkg.version, '0.1.22');
+  assert.equal(pkg.version, '0.1.23');
   assert.match(app, />JJtomato</);
   assert.match(main, /title: 'JJtomato'/);
 });
@@ -291,6 +291,17 @@ test('v0.1.18 提供桌边陪伴小猫和好友状态面板', () => {
   assert.match(css, /companion-cat-type/);
 });
 
+test('v0.1.23 提供可启动的实时陪伴服务与账号入口', () => {
+  const packageJson = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
+  const server = fs.readFileSync(path.join(root, 'server/companion-server.mjs'), 'utf8');
+  assert.match(packageJson, /"companion-server"/);
+  assert.match(app, /CompanionConnectionCard/);
+  assert.match(app, /createRealtimeConnection/);
+  assert.match(server, /\/api\/auth\/register/);
+  assert.match(server, /\/api\/rooms\/join/);
+  assert.match(server, /\/realtime/);
+});
+
 test('陪伴支持送番茄、快捷互动和短消息', () => {
   assert.match(app, /sendCompanionReaction/);
   assert.match(app, /送番茄/);
@@ -343,7 +354,7 @@ test('好友列表会按实际人数收缩，并在人数较多时才限制滚�
   assert.match(app, /count-\$\{friendListSize\}/);
   assert.match(css, /\.companion-friend-list\.count-1\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
   assert.match(css, /\.companion-friend-list\.count-many\s*\{[^}]*224px/s);
-  assert.match(css, /max-height:\s*224px/);
+  assert.match(css, /max-height:\s*122px/);
   assert.match(css, /-webkit-line-clamp:\s*2/);
 });
 

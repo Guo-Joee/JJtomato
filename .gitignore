@@ -10,4 +10,5 @@ release/latest.yml
 dist/
 .vite/
 *.log
+server/data/*.json
 .DS_Store

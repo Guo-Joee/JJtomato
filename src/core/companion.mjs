@@ -87,6 +87,7 @@ export function updateCompanionState(companion, state, activity = '') {
 }
 
 export function addCompanionMessage(messages, message) {
+  const hasStableId = Boolean(message?.id);
   const next = {
     id: message.id || `message-${Date.now()}`,
     friendId: String(message.friendId || ''),
@@ -96,7 +97,8 @@ export function addCompanionMessage(messages, message) {
     createdAt: message.createdAt || '刚刚',
   };
   if (!next.friendId || !next.text) return messages;
-  return [...(messages || []), next].slice(-100);
+  const existing = hasStableId ? (messages || []).filter((item) => item.id !== next.id) : (messages || []);
+  return [...existing, next].slice(-100);
 }
 
 export function primaryCompanion(companions = []) {

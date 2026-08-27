@@ -11,6 +11,7 @@ import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, buildTimelin
 import { COMPANION_QUICK_MESSAGES, COMPANION_REACTIONS, COMPANION_STATES, DEFAULT_COMPANION_PRIVACY, INITIAL_COMPANION_MESSAGES, INITIAL_COMPANIONS, addCompanionMessage, companionActivityLabel, companionStateLabel, normalizeCompanion, primaryCompanion, updateCompanionState } from '../core/companion.mjs';
 import { INTERRUPTION_REASONS, createFocusSession, normalizeDailyReview, resolveTaskTarget, summarizeDailyReview, taskTargetOptions } from '../core/focus-review.mjs';
 import { appendRoomEvent, createCompanionRoom, createTogetherResult, normalizeCompanionRoom, setRoomMemberPermissions } from '../core/companion-room.mjs';
+import { companionRequest, companionServerUrl, createRealtimeConnection } from '../core/companion-realtime.mjs';
 
 const VISUAL = {
   focus: {
@@ -197,7 +198,41 @@ function CompanionPet({ companion, open, onClick }) {
   );
 }
 
-function CompanionPanel({ open, room, companions, selectedId, messages, togetherId, onSelect, onClose, onReaction, onSendMessage, onQuickMessage, onChangeState, onStartTogether, onCopyInvite, onMemberPermissionsChange }) {
+function CompanionConnectionCard({ session, serverUrl, connection, onServerUrlChange, onAuthenticate, onCreateRoom, onJoinRoom }) {
+  const [mode, setMode] = useState('login');
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPassword] = useState('');
+  const [roomName, setRoomName] = useState('桌边陪伴');
+  const [inviteCode, setInviteCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submitAccount = async (event) => {
+    event.preventDefault(); setBusy(true);
+    try { await onAuthenticate(mode, { username, displayName, password }); setPassword(''); }
+    finally { setBusy(false); }
+  };
+  const action = async (callback, value) => { setBusy(true); try { await callback(value); } finally { setBusy(false); } };
+  return (
+    <details className="companion-connection-card">
+      <summary className="companion-connection-title"><strong>{session?.user ? `已登录：${session.user.displayName}` : '连接真实陪伴'}</strong><small className={connection.connected ? 'online' : ''}>{connection.connected ? '实时已连接' : connection.reconnecting ? '正在重连…' : '本地模式 · 点击连接'}</small></summary>
+      <div className="companion-connection-body">
+      {!session?.user ? <form className="companion-account-form" onSubmit={submitAccount}>
+        <div className="companion-account-tabs"><button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>登录</button><button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>注册</button></div>
+        <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="用户名（3-24 位）" autoComplete="username" required />
+        {mode === 'register' && <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="显示名称" required />}
+        <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="密码（至少 8 位）" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
+        <button type="submit" disabled={busy}>{busy ? '处理中…' : mode === 'login' ? '登录并连接' : '创建账号'}</button>
+      </form> : <div className="companion-room-actions">
+        <div><input value={roomName} onChange={(event) => setRoomName(event.target.value)} placeholder="陪伴房名称" /><button type="button" disabled={busy} onClick={() => action(onCreateRoom, roomName)}>新建房间</button></div>
+        <div><input value={inviteCode} onChange={(event) => setInviteCode(event.target.value.toUpperCase())} placeholder="输入邀请码" /><button type="button" disabled={busy || !inviteCode.trim()} onClick={() => action(onJoinRoom, inviteCode)}>加入</button></div>
+      </div>}
+      <label className="companion-server-url">服务地址<input value={serverUrl} onChange={(event) => onServerUrlChange(event.target.value)} placeholder="https://…" /></label>
+      </div>
+    </details>
+  );
+}
+
+function CompanionPanel({ open, room, companions, selectedId, messages, togetherId, session, serverUrl, connection, onServerUrlChange, onAuthenticate, onCreateRoom, onJoinRoom, onSelect, onClose, onReaction, onSendMessage, onQuickMessage, onTyping, onChangeState, onStartTogether, onCopyInvite, onMemberPermissionsChange }) {
   const [draft, setDraft] = useState('');
   const messageListRef = useRef(null);
   const selected = companions.find((item) => item.id === selectedId) || companions[0];
@@ -224,6 +259,7 @@ function CompanionPanel({ open, room, companions, selectedId, messages, together
           <motion.aside className="companion-panel glass-panel" initial={{ opacity: 0, x: 24, scale: .98 }} animate={{ opacity: 1, x: 0, scale: 1 }} exit={{ opacity: 0, x: 24, scale: .98 }} transition={{ duration: .18 }} onMouseDown={(event) => event.stopPropagation()}>
             <div className="companion-panel-head"><div><span className="eyebrow">桌边陪伴</span><strong><Users size={15} /> 和朋友一起在场</strong></div><button className="companion-close" onClick={onClose} aria-label="关闭陪伴面板"><X size={16} /></button></div>
             <p className="companion-panel-note">看见她在，也让她知道你在。状态只按你的权限共享。</p>
+            <CompanionConnectionCard session={session} serverUrl={serverUrl} connection={connection} onServerUrlChange={onServerUrlChange} onAuthenticate={onAuthenticate} onCreateRoom={onCreateRoom} onJoinRoom={onJoinRoom} />
             <div className="companion-room-card"><div><strong>{room?.name || '桌边陪伴'}</strong><small>本地陪伴房 · 实时服务接入前仅保存在本机</small></div><code>{room?.inviteCode}</code><button type="button" onClick={onCopyInvite} aria-label="复制陪伴房邀请码"><Copy size={13} /> 复制邀请码</button></div>
             <div className={`companion-friend-list count-${friendListSize}`}>
               {companions.map((friend) => (
@@ -236,6 +272,7 @@ function CompanionPanel({ open, room, companions, selectedId, messages, together
             </div>
             {selected ? (
               <>
+                <section className="companion-conversation">
                 <div className="companion-selected"><span className={`companion-selected-icon state-${selected.state}`}>🐱</span><div><strong>{selected.name}</strong><small>{companionActivityLabel(selected)}{selected.state === 'typing' ? ' · 不显示输入内容' : ''}</small></div></div>
                 {member && <div className="companion-member-permissions"><span>对 {selected.name} 共享</span>{[['shareOnline', '在线'], ['shareTyping', '输入'], ['shareActivity', '活动'], ['shareTask', '任务']].map(([key, label]) => <label key={key}><input type="checkbox" checked={Boolean(member.permissions?.[key])} onChange={(event) => onMemberPermissionsChange(selected.id, key, event.target.checked)} />{label}</label>)}</div>}
                 <button className="companion-together" onClick={() => onStartTogether(selected.id)} disabled={selected.state === 'offline' || (isTogether && !isPausedTogether)}><span>🪑</span>{selected.state === 'offline' ? '等她回来再一起坐下' : isPausedTogether ? `和${selected.name}继续专注` : isTogether ? '正在一起专注' : `和${selected.name}一起坐下`}</button>
@@ -250,8 +287,8 @@ function CompanionPanel({ open, room, companions, selectedId, messages, together
                 <div className="companion-messages" ref={messageListRef} aria-live="polite">
                   {selectedMessages.length === 0 ? <div className="companion-empty">还没有留言，先送一颗番茄吧。</div> : selectedMessages.map((message) => <div className={`companion-message ${message.sender === 'me' ? 'mine' : ''} ${message.kind === 'reaction' ? 'reaction' : ''}`} key={message.id}><span>{message.text}</span><small>{message.createdAt}</small></div>)}
                 </div>
-                <form className="companion-message-form" onSubmit={submit}><input value={draft} maxLength={300} onChange={(event) => setDraft(event.target.value)} placeholder="说一句悄悄话…" aria-label="输入陪伴留言" /><button type="submit" aria-label="发送消息" disabled={!draft.trim()}><Send size={15} /></button></form>
-                <label className="companion-demo-row"><span>本地演示状态</span><select value={selected.state} onChange={(event) => onChangeState(selected.id, event.target.value)}>{Object.entries(COMPANION_STATES).map(([key, value]) => <option value={key} key={key}>{value.label}</option>)}</select></label>
+                <form className="companion-message-form" onSubmit={submit}><input value={draft} maxLength={300} onChange={(event) => { setDraft(event.target.value); onTyping?.(Boolean(event.target.value.trim())); }} onBlur={() => onTyping?.(false)} placeholder="说一句悄悄话…" aria-label="输入陪伴留言" /><button type="submit" aria-label="发送消息" disabled={!draft.trim()}><Send size={15} /></button></form>
+                </section>
               </>
             ) : <div className="companion-empty large">还没有好友，下一步可以创建陪伴房。</div>}
           </motion.aside>
@@ -604,6 +641,9 @@ export default function App() {
   }))));
   const [companionMessages, setCompanionMessages] = useState(() => loadJson(localStorage, 'tomato.companionMessages', INITIAL_COMPANION_MESSAGES) || INITIAL_COMPANION_MESSAGES);
   const [companionPrivacy, setCompanionPrivacy] = useState(() => ({ ...DEFAULT_COMPANION_PRIVACY, ...(loadJson(localStorage, 'tomato.companionPrivacy', {}) || {}) }));
+  const [companionServer, setCompanionServer] = useState(() => loadJson(localStorage, 'tomato.companionServer', companionServerUrl()) || companionServerUrl());
+  const [companionSession, setCompanionSession] = useState(() => loadJson(localStorage, 'tomato.companionSession', null));
+  const [companionConnection, setCompanionConnection] = useState({ connected: false, reconnecting: false });
   const [companionOpen, setCompanionOpen] = useState(false);
   const [selectedCompanionId, setSelectedCompanionId] = useState(() => (loadJson(localStorage, 'tomato.companions', INITIAL_COMPANIONS)?.[0]?.id || INITIAL_COMPANIONS[0].id));
   const [companionNotice, setCompanionNotice] = useState('');
@@ -622,6 +662,7 @@ export default function App() {
   const focusPauseCountRef = useRef(0);
   const focusInterruptionReasonsRef = useRef([]);
   const focusTaskRef = useRef(null);
+  const companionRealtimeRef = useRef(null);
 
   // "一起专注" is a live session, not durable friend profile data. Repair
   // stale values saved by earlier versions so a restarted app never appears
@@ -685,6 +726,54 @@ export default function App() {
   };
 
   const updateCompanion = (id, patch) => setCompanions((items) => items.map((item) => item.id === id ? normalizeCompanion({ ...item, ...patch }) : item));
+  const messageFromRemote = (message, ownId = companionSession?.user?.id) => ({
+    id: message.id,
+    friendId: message.senderId === ownId ? message.receiverId || message.senderId : message.senderId,
+    sender: message.senderId === ownId ? 'me' : 'friend',
+    kind: message.kind,
+    text: message.text,
+    createdAt: new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+  });
+  const applyRemoteRoom = (room, ownId = companionSession?.user?.id) => {
+    if (!room) return;
+    const members = (room.members || []).map((member) => ({ ...member, name: member.displayName || member.name }));
+    setCompanionRoom((current) => normalizeCompanionRoom({ ...room, members, events: current?.events || [] }));
+    const friends = members.filter((member) => member.id !== ownId).map((member) => normalizeCompanion({
+      id: member.id, name: member.name, state: 'offline', activity: '暂时不在线', durationLabel: '', unread: 0, permissions: member.permissions,
+    }));
+    setCompanions(friends);
+    setSelectedCompanionId((current) => friends.some((friend) => friend.id === current) ? current : friends[0]?.id || null);
+  };
+  const syncCompanionAccount = async (token, fallbackUser) => {
+    const profile = await companionRequest('/api/me', { token, baseUrl: companionServer });
+    const session = { token, user: profile.user || fallbackUser };
+    setCompanionSession(session);
+    if (profile.rooms?.[0]) {
+      applyRemoteRoom(profile.rooms[0], session.user.id);
+      const response = await companionRequest(`/api/rooms/${profile.rooms[0].id}/messages`, { token, baseUrl: companionServer });
+      setCompanionMessages(response.messages.map((message) => messageFromRemote(message, session.user.id)));
+    } else {
+      setCompanions([]);
+      setSelectedCompanionId(null);
+    }
+  };
+  const authenticateCompanion = async (mode, credentials) => {
+    try {
+      const response = await companionRequest(`/api/auth/${mode === 'register' ? 'register' : 'login'}`, { method: 'POST', body: credentials, baseUrl: companionServer });
+      await syncCompanionAccount(response.token, response.user);
+      flashCompanionNotice(mode === 'register' ? '账号已创建，接下来可以新建或加入陪伴房。' : '已登录并同步陪伴房。');
+    } catch (error) { flashCompanionNotice(error.message || '无法连接陪伴服务。'); }
+  };
+  const createRemoteRoom = async (name) => {
+    if (!companionSession?.token) return;
+    try { const response = await companionRequest('/api/rooms', { method: 'POST', token: companionSession.token, body: { name }, baseUrl: companionServer }); applyRemoteRoom(response.room, companionSession.user.id); flashCompanionNotice('陪伴房已创建，邀请码可复制给朋友。'); }
+    catch (error) { flashCompanionNotice(error.message || '创建陪伴房失败。'); }
+  };
+  const joinRemoteRoom = async (inviteCode) => {
+    if (!companionSession?.token) return;
+    try { const response = await companionRequest('/api/rooms/join', { method: 'POST', token: companionSession.token, body: { inviteCode }, baseUrl: companionServer }); applyRemoteRoom(response.room, companionSession.user.id); const messages = await companionRequest(`/api/rooms/${response.room.id}/messages`, { token: companionSession.token, baseUrl: companionServer }); setCompanionMessages(messages.messages.map((message) => messageFromRemote(message, companionSession.user.id))); flashCompanionNotice('已加入陪伴房，好友关系已建立。'); }
+    catch (error) { flashCompanionNotice(error.message || '加入陪伴房失败。'); }
+  };
   const setTogetherCompanion = (id) => {
     togetherCompanionIdRef.current = id;
     setTogetherCompanionId(id);
@@ -795,6 +884,7 @@ export default function App() {
       beginFocusSession(Date.now(), resolvedCurrentTarget);
       const friendId = togetherCompanionIdRef.current;
       if (friendId) updateCompanion(friendId, { state: 'focusing', activity: '和你一起专注', durationLabel: '继续专注' });
+      companionRealtimeRef.current?.send({ type: 'presence', state: 'focusing', activity: '正在专注' });
     }
     deadlineRef.current = performance.now() + remaining * 1000;
     setPaused(false);
@@ -812,6 +902,7 @@ export default function App() {
       focusPauseCountRef.current += 1;
       const friendId = togetherCompanionIdRef.current;
       if (friendId) updateCompanion(friendId, { state: 'paused', activity: '等你继续', durationLabel: '暂停中' });
+      companionRealtimeRef.current?.send({ type: 'presence', state: 'paused', activity: '暂时休息' });
     }
     setPaused(true);
     setRunning(false);
@@ -829,6 +920,7 @@ export default function App() {
     setRemaining(durations.focus * 60);
     setRunning(false);
     setPaused(false);
+    companionRealtimeRef.current?.send({ type: 'presence', state: 'online', activity: '准备开始' });
     setNotice(saved ? '本次真实专注记录已保存。' : '本次不足 1 分钟，没有写入专注记录。');
   };
   const toggleRunning = useCallback(() => {
@@ -856,7 +948,12 @@ export default function App() {
     const friend = companions.find((item) => item.id === friendId);
     const reaction = COMPANION_REACTIONS[type];
     if (!friend || !reaction || companionPrivacy.shareReactions === false) return;
-    setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', kind: 'reaction', text: `${reaction.emoji} ${reaction.text}`, createdAt: '刚刚' }));
+    const text = `${reaction.emoji} ${reaction.text}`;
+    if (companionSession?.token && companionRoom?.id?.startsWith('room_')) {
+      companionRequest(`/api/rooms/${companionRoom.id}/messages`, { method: 'POST', token: companionSession.token, body: { receiverId: friendId, kind: 'reaction', text }, baseUrl: companionServer })
+        .then(({ message }) => setCompanionMessages((items) => addCompanionMessage(items, messageFromRemote(message))))
+        .catch((error) => flashCompanionNotice(error.message || '互动暂未送达。'));
+    } else setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', kind: 'reaction', text, createdAt: '刚刚' }));
     setCompanionRoom((room) => appendRoomEvent(room, { type: `reaction:${type}`, senderId: 'me', receiverId: friendId }));
     flashCompanionNotice(`已送给${friend.name}${reaction.text}`);
   };
@@ -864,7 +961,11 @@ export default function App() {
     const friend = companions.find((item) => item.id === friendId);
     const trimmed = String(text || '').trim();
     if (!friend || !trimmed) return;
-    setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', text: trimmed, createdAt: '刚刚' }));
+    if (companionSession?.token && companionRoom?.id?.startsWith('room_')) {
+      companionRequest(`/api/rooms/${companionRoom.id}/messages`, { method: 'POST', token: companionSession.token, body: { receiverId: friendId, text: trimmed }, baseUrl: companionServer })
+        .then(({ message }) => setCompanionMessages((items) => addCompanionMessage(items, messageFromRemote(message))))
+        .catch((error) => flashCompanionNotice(error.message || '留言暂未送达。'));
+    } else setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', text: trimmed, createdAt: '刚刚' }));
     setCompanionRoom((room) => appendRoomEvent(room, { type: 'message', senderId: 'me', receiverId: friendId, payload: { length: trimmed.length } }));
     flashCompanionNotice(`留言已送达${friend.name}`);
   };
@@ -911,6 +1012,11 @@ export default function App() {
   };
   const changeRoomMemberPermissions = (friendId, key, value) => {
     setCompanionRoom((room) => setRoomMemberPermissions(room, friendId, { [key]: value }));
+    if (companionSession?.token && companionRoom?.id?.startsWith('room_')) {
+      companionRequest(`/api/rooms/${companionRoom.id}/permissions/${friendId}`, { method: 'PATCH', token: companionSession.token, body: { permissions: { [key]: value } }, baseUrl: companionServer })
+        .then(({ room }) => applyRemoteRoom(room, companionSession.user.id))
+        .catch((error) => flashCompanionNotice(error.message || '权限保存失败。'));
+    }
   };
 
   const toggleTask = (task, parentId = null, targetDate = today) => {
@@ -1088,6 +1194,31 @@ export default function App() {
   }, [settingsOpen, modeSeconds, toggleRunning]);
 
   useEffect(() => {
+    companionRealtimeRef.current?.close();
+    if (!companionSession?.token) { setCompanionConnection({ connected: false, reconnecting: false }); return undefined; }
+    const connection = createRealtimeConnection({
+      token: companionSession.token,
+      baseUrl: companionServer,
+      onStatus: setCompanionConnection,
+      onEvent: (event) => {
+        if (event.type === 'message' && event.message) setCompanionMessages((items) => addCompanionMessage(items, messageFromRemote(event.message, companionSession.user.id)));
+        if (event.type === 'presence' && event.userId !== companionSession.user.id) updateCompanion(event.userId, {
+          state: event.presence?.isTyping ? 'typing' : event.presence?.state || 'offline', activity: event.presence?.activity || '', durationLabel: event.presence?.state === 'offline' ? '' : '刚刚',
+        });
+        if (event.type === 'typing' && event.userId !== companionSession.user.id) setCompanions((items) => items.map((friend) => friend.id === event.userId ? normalizeCompanion({ ...friend, state: event.isTyping ? 'typing' : friend.state === 'typing' ? 'online' : friend.state, activity: event.isTyping ? '正在输入' : friend.activity }) : friend));
+        if ((event.type === 'room:member' || event.type === 'room:permissions') && event.room) applyRemoteRoom(event.room, companionSession.user.id);
+        if (event.type === 'ready') {
+          companionRealtimeRef.current?.send({ type: 'presence', state: running && mode === 'focus' ? 'focusing' : 'online', activity: running && mode === 'focus' ? '正在专注' : '准备开始' });
+          if (companionRoom?.id?.startsWith('room_')) companionRequest(`/api/rooms/${companionRoom.id}/messages`, { token: companionSession.token, baseUrl: companionServer }).then(({ messages }) => setCompanionMessages(messages.map((message) => messageFromRemote(message, companionSession.user.id)))).catch(() => {});
+        }
+        if (event.type === 'error') flashCompanionNotice(event.error || '实时连接发生错误。');
+      },
+    });
+    companionRealtimeRef.current = connection;
+    return () => connection.close();
+  }, [companionSession?.token, companionServer]);
+
+  useEffect(() => {
     if (!isMini) window.tomatoDesktop?.sendTimerState(statePayload);
   }, [isMini, statePayload]);
   useEffect(() => { saveJson(localStorage, 'tomato.tasks', tasks); }, [tasks]);
@@ -1115,6 +1246,8 @@ export default function App() {
   useEffect(() => { saveJson(localStorage, 'tomato.companionRoom', companionRoom); }, [companionRoom]);
   useEffect(() => { saveJson(localStorage, 'tomato.companionMessages', companionMessages); }, [companionMessages]);
   useEffect(() => { saveJson(localStorage, 'tomato.companionPrivacy', companionPrivacy); }, [companionPrivacy]);
+  useEffect(() => { saveJson(localStorage, 'tomato.companionServer', companionServer); }, [companionServer]);
+  useEffect(() => { saveJson(localStorage, 'tomato.companionSession', companionSession); }, [companionSession]);
   useEffect(() => {
     saveJson(localStorage, 'tomato.opacity', opacity);
     window.tomatoDesktop?.setOpacity(opacity);
@@ -1179,7 +1312,7 @@ export default function App() {
         </main>
       )}
       {view === 'today' && <CompanionPet companion={primaryFriend} open={companionOpen} onClick={() => { setCompanionOpen((value) => !value); setSelectedCompanionId(primaryFriend.id); }} />}
-      <CompanionPanel open={companionOpen && view === 'today'} room={companionRoom} companions={companions} selectedId={selectedCompanionId} messages={companionMessages} togetherId={togetherCompanionId} onSelect={selectCompanion} onClose={() => setCompanionOpen(false)} onReaction={sendCompanionReaction} onSendMessage={sendCompanionMessage} onQuickMessage={sendCompanionQuickMessage} onChangeState={changeCompanionState} onStartTogether={startTogetherFocus} onCopyInvite={copyCompanionInvite} onMemberPermissionsChange={changeRoomMemberPermissions} />
+      <CompanionPanel open={companionOpen && view === 'today'} room={companionRoom} companions={companions} selectedId={selectedCompanionId} messages={companionMessages} togetherId={togetherCompanionId} session={companionSession} serverUrl={companionServer} connection={companionConnection} onServerUrlChange={setCompanionServer} onAuthenticate={authenticateCompanion} onCreateRoom={createRemoteRoom} onJoinRoom={joinRemoteRoom} onSelect={selectCompanion} onClose={() => setCompanionOpen(false)} onReaction={sendCompanionReaction} onSendMessage={sendCompanionMessage} onQuickMessage={sendCompanionQuickMessage} onTyping={(isTyping) => companionRealtimeRef.current?.send({ type: 'typing', roomId: companionRoom?.id, isTyping })} onChangeState={changeCompanionState} onStartTogether={startTogetherFocus} onCopyInvite={copyCompanionInvite} onMemberPermissionsChange={changeRoomMemberPermissions} />
       <TogetherResultCard result={togetherResult} onClose={() => setTogetherResult(null)} />
       {companionNotice && <div className="companion-toast" role="status">{companionNotice}</div>}
       <footer className="bottom-bar glass-line">

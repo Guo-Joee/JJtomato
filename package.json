@@ -1,6 +1,6 @@
 {
   "name": "jjtomato",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "JJtomato：番茄 × ins 玻璃风桌面番茄钟",
   "author": "Guo-Joee",
   "main": "electron/main.cjs",
@@ -10,6 +10,7 @@
     "build": "vite build",
     "test": "node --test tests/*.test.mjs",
     "electron": "electron .",
+    "companion-server": "node server/companion-server.mjs",
     "dist": "npm run build && electron-builder --win portable nsis"
   },
   "dependencies": {},
