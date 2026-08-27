@@ -2,13 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Check, Coffee, Download, ListTodo, MessageCircle, Minus, Pause, Play, Plus, RotateCcw,
-  Send, Settings, SkipForward, Square, Trash2, Users, X,
+  CalendarDays, Check, ClipboardCheck, Coffee, Download, ListTodo, MessageCircle, Minus, Pause, Play, Plus, RotateCcw,
+  Send, Settings, SkipForward, Square, Target, Trash2, Users, X,
 } from 'lucide-react';
 import { MINIMUM_FOCUS_SESSION_SECONDS, MODES, accumulatedFocusSeconds, formatTime, nextMode, progressOf, remainingSecondsAt, shouldPersistFocusSession } from '../core/timer.mjs';
 import { loadJson, saveJson } from '../core/storage.mjs';
 import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, buildTimelineTaskGroups, completeTaskTree, consumeTaskTomatoes, dailyStatsForDate, daysForRange, flattenTaskTree, formatDuration, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, reopenTaskTree, rolloverTasksWithHistory, summarizeDay, summarizeTaskTree, toggleSubtaskCompletion, updateTaskInTree } from '../core/daily-todo.mjs';
 import { COMPANION_QUICK_MESSAGES, COMPANION_REACTIONS, COMPANION_STATES, DEFAULT_COMPANION_PRIVACY, INITIAL_COMPANION_MESSAGES, INITIAL_COMPANIONS, addCompanionMessage, companionActivityLabel, companionStateLabel, normalizeCompanion, primaryCompanion, updateCompanionState } from '../core/companion.mjs';
+import { INTERRUPTION_REASONS, createFocusSession, normalizeDailyReview, resolveTaskTarget, summarizeDailyReview, taskTargetOptions } from '../core/focus-review.mjs';
 
 const VISUAL = {
   focus: {
@@ -89,7 +90,7 @@ function ModeSwitcher({ mode, onChange }) {
   );
 }
 
-function TimerHero({ mode, remaining, running, paused, onToggle, onReset, onSkip }) {
+function TimerHero({ mode, remaining, running, paused, targetOptions, currentTarget, focusElapsed, onSelectTarget, onToggle, onReset, onSkip, onInterruptionReason, onFinishSession }) {
   const cfg = MODES[mode];
   const visual = VISUAL[mode];
   const progress = progressOf(remaining, cfg.seconds);
@@ -103,6 +104,19 @@ function TimerHero({ mode, remaining, running, paused, onToggle, onReset, onSkip
         <span>{cfg.fullLabel}</span>
         <p>{visual.caption}</p>
       </div>
+      {isFocus && (
+        <div className={`focus-target ${currentTarget ? 'selected' : ''}`}>
+          <Target size={15} />
+          <label>
+            <span>{currentTarget ? '当前目标' : '开始前先选择任务'}</span>
+            <select value={currentTarget?.key || ''} disabled={running} onChange={(event) => onSelectTarget(event.target.value)} aria-label="选择当前专注任务">
+              <option value="">选择今天的下一步…</option>
+              {targetOptions.map((option) => <option value={option.key} key={option.key}>{option.label}</option>)}
+            </select>
+          </label>
+          <small>已专注 {formatTime(focusElapsed)}</small>
+        </div>
+      )}
       <div className="timer-safe-zone">
         <motion.div
           className="halo"
@@ -136,6 +150,13 @@ function TimerHero({ mode, remaining, running, paused, onToggle, onReset, onSkip
         </motion.button>
         <button className="secondary" aria-label="跳过" onClick={onSkip}><SkipForward size={20} /></button>
       </div>
+      {isFocus && paused && (
+        <div className="interruption-panel">
+          <span>记录中断原因</span>
+          <div>{INTERRUPTION_REASONS.map((reason) => <button type="button" key={reason} onClick={() => onInterruptionReason(reason)}>{reason}</button>)}</div>
+          <button type="button" className="finish-session" onClick={onFinishSession}>结束本次</button>
+        </div>
+      )}
       <div className="key-hints"><kbd>Space</kbd> 开始/暂停 <i /> <kbd>R</kbd> 重置</div>
     </section>
   );
@@ -352,7 +373,7 @@ function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions
   return (
     <section className="vertical-todo glass-panel">
       <div className="vertical-todo-head">
-        <div><span className="eyebrow">番茄时间轴</span><h1>Todo 总览</h1></div>
+        <div><span className="eyebrow">Todo 总览</span><h1>计划</h1></div>
         <button className="export-todo" disabled={!selectedDates.length} onClick={onExport}><Download size={15} /> 导出</button>
       </div>
       <div className="vertical-toolbar">
@@ -395,6 +416,49 @@ function VerticalTodoOverview({ tasks, history, dailyStats, today, focusSessions
         </div>
       </div>
     </section>
+  );
+}
+
+function DailyReviewPage({ date, tasks, sessions, review, onSave }) {
+  const [draft, setDraft] = useState(() => normalizeDailyReview(review, date));
+  const summary = summarizeDailyReview({ tasks, sessions });
+  useEffect(() => { setDraft(normalizeDailyReview(review, date)); }, [date, review]);
+  const save = (event) => {
+    event.preventDefault();
+    onSave(normalizeDailyReview({ ...draft, updatedAt: Date.now() }, date));
+  };
+  return (
+    <main className="review-page">
+      <section className="review-card glass-panel">
+        <header className="review-head">
+          <div><span className="eyebrow">10 秒复盘</span><h1>把今天真实留下来</h1><p>{date} · 不评分，只记录进展和下一步。</p></div>
+          <ClipboardCheck size={34} />
+        </header>
+        <div className="review-stats">
+          <div><span>今日专注</span><strong>{formatDuration(summary.focusSeconds)}</strong></div>
+          <div><span>完成任务</span><strong>{summary.completedTasks} 项</strong></div>
+          <div><span>被打断</span><strong>{summary.interruptions} 次</strong></div>
+        </div>
+        <form className="review-form" onSubmit={save}>
+          <label><span>今天真正完成了什么？</span><textarea maxLength={1000} value={draft.completedReflection} onChange={(event) => setDraft((value) => ({ ...value, completedReflection: event.target.value }))} placeholder="写下一句就够了…" /></label>
+          <label><span>明天最重要的一件事是什么？</span><textarea maxLength={500} value={draft.tomorrowFirstStep} onChange={(event) => setDraft((value) => ({ ...value, tomorrowFirstStep: event.target.value }))} placeholder="把它写成能立刻开始的下一步…" /></label>
+          <button type="submit">保存今日复盘</button>
+          {draft.updatedAt && <small>上次保存：{new Date(draft.updatedAt).toLocaleString('zh-CN')}</small>}
+        </form>
+      </section>
+      <section className="session-card glass-panel">
+        <div className="session-head"><div><span className="eyebrow">真实专注记录</span><h2>今天的每一段专注</h2></div><span>{sessions.length} 段</span></div>
+        <div className="session-list">
+          {sessions.length === 0 ? <div className="session-empty">完成至少 1 分钟专注后，这里会记录对应任务、有效时长和中断。</div> : [...sessions].reverse().map((session, index) => (
+            <article key={session.id || `${session.startedAt}:${index}`}>
+              <Target size={15} />
+              <div><strong>{session.taskText || '旧版未绑定任务的专注'}</strong><small>{new Date(session.startedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 开始 · 有效专注 {formatDuration(session.actualSeconds)}</small>{session.interruptionReasons?.length > 0 && <em>中断：{session.interruptionReasons.join('、')}</em>}</div>
+              <span>暂停 {Number(session.pauseCount) || 0} 次</span>
+            </article>
+          ))}
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -483,7 +547,7 @@ function MiniTimer({ mode, remaining, running }) {
 export default function App() {
   const isMini = window.location.hash === '#mini';
   const [today, setToday] = useState(() => localDateKey());
-  const [view, setView] = useState('timer');
+  const [view, setView] = useState('today');
   const [todoRange, setTodoRange] = useState('week');
   const [todoAnchor, setTodoAnchor] = useState(() => localDateKey());
   const [selectedDates, setSelectedDates] = useState(() => daysForRange('week', localDateKey()));
@@ -502,6 +566,9 @@ export default function App() {
   const [digested, setDigested] = useState(initialTodayStats.digestedTomatoes);
   const [tasks, setTasks] = useState(initialTodoState.tasks);
   const [focusSessions, setFocusSessions] = useState(() => loadJson(localStorage, 'tomato.focusSessions', {}));
+  const [currentTarget, setCurrentTarget] = useState(() => loadJson(localStorage, 'tomato.currentTarget', null));
+  const [focusElapsed, setFocusElapsed] = useState(0);
+  const [dailyReviews, setDailyReviews] = useState(() => loadJson(localStorage, 'tomato.dailyReviews', {}));
   const [dailyHistory, setDailyHistory] = useState(initialTodoState.history);
   const [dailyStats, setDailyStats] = useState(initialDailyStats);
   const [notice, setNotice] = useState('');
@@ -526,6 +593,10 @@ export default function App() {
   const focusRunStartedAtRef = useRef(null);
   const focusActiveSecondsRef = useRef(0);
   const focusSessionDateRef = useRef(null);
+  const focusPlannedSecondsRef = useRef(0);
+  const focusPauseCountRef = useRef(0);
+  const focusInterruptionReasonsRef = useRef([]);
+  const focusTaskRef = useRef(null);
 
   // "一起专注" is a live session, not durable friend profile data. Repair
   // stale values saved by earlier versions so a restarted app never appears
@@ -553,6 +624,8 @@ export default function App() {
 
   const focusSecondsToday = (focusSessions[today] || []).reduce((sum, session) => sum + (Number(session.actualSeconds) || 0), 0);
   const todayFocusLabel = formatDuration(focusSecondsToday);
+  const availableTargets = useMemo(() => taskTargetOptions(tasks), [tasks]);
+  const resolvedCurrentTarget = useMemo(() => resolveTaskTarget(tasks, currentTarget), [tasks, currentTarget]);
   const modeSeconds = durations[mode] * 60;
   const statePayload = useMemo(() => ({
     mode,
@@ -576,6 +649,16 @@ export default function App() {
     setSettingsOpen(false);
   };
 
+  const selectFocusTarget = (key) => {
+    if (running && mode === 'focus') {
+      setNotice('请先暂停或结束当前专注，再切换任务。');
+      return;
+    }
+    const next = availableTargets.find((option) => option.key === key) || null;
+    setCurrentTarget(next ? { key: next.key, taskId: next.taskId, parentTaskId: next.parentTaskId } : null);
+    setNotice(next ? `当前目标已切换为“${next.text}”。` : '已清除当前目标。');
+  };
+
   const updateCompanion = (id, patch) => setCompanions((items) => items.map((item) => item.id === id ? normalizeCompanion({ ...item, ...patch }) : item));
   const setTogetherCompanion = (id) => {
     togetherCompanionIdRef.current = id;
@@ -592,23 +675,34 @@ export default function App() {
     clearTogetherCompanion();
   };
 
-  const beginFocusSession = (startedAt = Date.now()) => {
+  const beginFocusSession = (startedAt = Date.now(), target = resolvedCurrentTarget) => {
     if (focusStartedAtRef.current == null) {
       focusStartedAtRef.current = startedAt;
       focusActiveSecondsRef.current = 0;
       focusSessionDateRef.current = localDateKey(new Date(startedAt));
+      focusPlannedSecondsRef.current = durations.focus * 60;
+      focusPauseCountRef.current = 0;
+      focusInterruptionReasonsRef.current = [];
+      focusTaskRef.current = target;
     }
     focusRunStartedAtRef.current = startedAt;
+    setFocusElapsed(Math.round(focusActiveSecondsRef.current));
   };
   const pauseFocusSegment = (endedAt = Date.now()) => {
     focusActiveSecondsRef.current = accumulatedFocusSeconds(focusActiveSecondsRef.current, focusRunStartedAtRef.current, endedAt);
     focusRunStartedAtRef.current = null;
+    setFocusElapsed(Math.round(focusActiveSecondsRef.current));
   };
   const clearFocusSession = () => {
     focusStartedAtRef.current = null;
     focusRunStartedAtRef.current = null;
     focusActiveSecondsRef.current = 0;
     focusSessionDateRef.current = null;
+    focusPlannedSecondsRef.current = 0;
+    focusPauseCountRef.current = 0;
+    focusInterruptionReasonsRef.current = [];
+    focusTaskRef.current = null;
+    setFocusElapsed(0);
   };
   const finishFocusSession = () => {
     if (mode !== 'focus' || focusStartedAtRef.current == null) return false;
@@ -617,9 +711,18 @@ export default function App() {
     const seconds = Math.round(focusActiveSecondsRef.current);
     const startedAt = focusStartedAtRef.current;
     const sessionDate = focusSessionDateRef.current || today;
+    const session = createFocusSession({
+      startedAt,
+      endedAt,
+      actualSeconds: seconds,
+      plannedSeconds: focusPlannedSecondsRef.current,
+      pauseCount: focusPauseCountRef.current,
+      interruptionReasons: focusInterruptionReasonsRef.current,
+      target: focusTaskRef.current,
+    });
     clearFocusSession();
     if (!shouldPersistFocusSession(seconds, MINIMUM_FOCUS_SESSION_SECONDS)) return false;
-    setFocusSessions((all) => ({ ...all, [sessionDate]: [...(all[sessionDate] || []), { actualSeconds: seconds, startedAt, endedAt }] }));
+    setFocusSessions((all) => ({ ...all, [sessionDate]: [...(all[sessionDate] || []), session] }));
     return true;
   };
 
@@ -648,7 +751,11 @@ export default function App() {
   const startTimer = () => {
     if (running || remaining <= 0) return;
     if (mode === 'focus') {
-      beginFocusSession();
+      if (!resolvedCurrentTarget) {
+        setNotice('开始专注前，请先选择一个今天的任务或子任务。');
+        return;
+      }
+      beginFocusSession(Date.now(), resolvedCurrentTarget);
       const friendId = togetherCompanionIdRef.current;
       if (friendId) updateCompanion(friendId, { state: 'focusing', activity: '和你一起专注', durationLabel: '继续专注' });
     }
@@ -665,16 +772,32 @@ export default function App() {
     setRemaining(nextRemaining);
     if (mode === 'focus') {
       pauseFocusSegment();
+      focusPauseCountRef.current += 1;
       const friendId = togetherCompanionIdRef.current;
       if (friendId) updateCompanion(friendId, { state: 'paused', activity: '等你继续', durationLabel: '暂停中' });
     }
     setPaused(true);
     setRunning(false);
   };
+  const recordInterruptionReason = (reason) => {
+    if (mode !== 'focus' || !paused || focusStartedAtRef.current == null) return;
+    const pauseIndex = Math.max(0, focusPauseCountRef.current - 1);
+    focusInterruptionReasonsRef.current[pauseIndex] = reason;
+    setNotice(`已记录中断原因：${reason}`);
+  };
+  const finishCurrentFocus = () => {
+    const saved = finishFocusSession();
+    endTogetherFocus();
+    deadlineRef.current = null;
+    setRemaining(durations.focus * 60);
+    setRunning(false);
+    setPaused(false);
+    setNotice(saved ? '本次真实专注记录已保存。' : '本次不足 1 分钟，没有写入专注记录。');
+  };
   const toggleRunning = useCallback(() => {
     if (running) pauseTimer();
     else startTimer();
-  }, [running, remaining]);
+  }, [running, remaining, mode, resolvedCurrentTarget]);
   const skip = () => switchMode(nextMode(mode, completed));
 
   const changeCompanionState = (id, state) => {
@@ -707,6 +830,11 @@ export default function App() {
   const startTogetherFocus = (friendId) => {
     const friend = companions.find((item) => item.id === friendId);
     if (!friend || friend.state === 'offline') return;
+    if (!resolvedCurrentTarget) {
+      setNotice('一起专注前，请先在今天页面选择当前任务。');
+      setCompanionOpen(false);
+      return;
+    }
     const wasTogether = togetherCompanionIdRef.current === friendId;
     if (togetherCompanionIdRef.current && !wasTogether) endTogetherFocus();
     if (!(running && mode === 'focus')) {
@@ -715,7 +843,7 @@ export default function App() {
       deadlineRef.current = performance.now() + nextRemaining * 1000;
       setMode('focus');
       setRemaining(nextRemaining);
-      beginFocusSession();
+      beginFocusSession(Date.now(), resolvedCurrentTarget);
       setPaused(false);
       setRunning(true);
     }
@@ -810,6 +938,11 @@ export default function App() {
     });
   };
 
+  const saveDailyReview = (review) => {
+    setDailyReviews((all) => ({ ...all, [today]: review }));
+    setNotice('今日复盘已保存，明天可以从第一步继续。');
+  };
+
   const exportTodayMarkdown = () => {
     const date = today;
     const markdown = buildDailyTodoMarkdown({ date, tasks, edibleTomatoes: completed, digestedTomatoes: digested });
@@ -850,6 +983,9 @@ export default function App() {
     const tick = () => {
       if (deadlineRef.current == null) return;
       const nextRemaining = remainingSecondsAt(deadlineRef.current, performance.now());
+      if (mode === 'focus' && focusRunStartedAtRef.current != null) {
+        setFocusElapsed(Math.round(accumulatedFocusSeconds(focusActiveSecondsRef.current, focusRunStartedAtRef.current, Date.now())));
+      }
       // A delayed renderer callback may observe an older value. Never allow
       // the displayed countdown to increase because of that stale callback.
       setRemaining((value) => Math.min(value, nextRemaining));
@@ -869,7 +1005,7 @@ export default function App() {
       window.setTimeout(() => switchMode(next), 0);
     };
 
-    intervalId = window.setInterval(tick, 250);
+    intervalId = window.setInterval(tick, 1000);
     timerRef.current = intervalId;
     tick();
     return () => {
@@ -907,6 +1043,11 @@ export default function App() {
   useEffect(() => { saveJson(localStorage, 'tomato.digested', digested); }, [digested]);
   useEffect(() => { saveJson(localStorage, 'tomato.dailyStats', dailyStats); }, [dailyStats]);
   useEffect(() => { saveJson(localStorage, 'tomato.focusSessions', focusSessions); }, [focusSessions]);
+  useEffect(() => { saveJson(localStorage, 'tomato.currentTarget', currentTarget); }, [currentTarget]);
+  useEffect(() => { saveJson(localStorage, 'tomato.dailyReviews', dailyReviews); }, [dailyReviews]);
+  useEffect(() => {
+    if (currentTarget && !resolvedCurrentTarget && focusStartedAtRef.current == null) setCurrentTarget(null);
+  }, [currentTarget, resolvedCurrentTarget]);
   useEffect(() => {
     setDailyHistory((history) => ({
       ...history,
@@ -951,7 +1092,7 @@ export default function App() {
       if (miniDeadlineRef.current == null) return;
       const seconds = Math.max(0, Math.round((miniDeadlineRef.current - Date.now()) / 1000));
       setRemaining((value) => Math.min(value, seconds));
-    }, 250);
+    }, 1000);
     return () => window.clearInterval(intervalId);
   }, [isMini, running]);
 
@@ -963,23 +1104,26 @@ export default function App() {
       <TitleBar />
       <div className="top-controls">
         <div className="view-switcher" aria-label="页面切换">
-          <button className={view === 'timer' ? 'active' : ''} onClick={() => setView('timer')}>专注台</button>
-          <button className={view === 'todo' ? 'active' : ''} onClick={() => setView('todo')}>Todo 总览</button>
+          <button className={view === 'today' ? 'active' : ''} onClick={() => setView('today')}><Target size={13} />今天</button>
+          <button className={view === 'plan' ? 'active' : ''} onClick={() => setView('plan')}><CalendarDays size={13} />计划</button>
+          <button className={view === 'review' ? 'active' : ''} onClick={() => setView('review')}><ClipboardCheck size={13} />复盘</button>
         </div>
-        {view === 'timer' && <ModeSwitcher mode={mode} onChange={switchMode} />}
+        {view === 'today' && <ModeSwitcher mode={mode} onChange={switchMode} />}
       </div>
-      {view === 'todo' ? (
+      {view === 'plan' ? (
         <main className="todo-page">
           <VerticalTodoOverview tasks={tasks} history={dailyHistory} dailyStats={dailyStats} today={today} focusSessions={focusSessions} range={todoRange} anchorDate={todoAnchor} selectedDates={selectedDates} onRangeChange={changeTodoRange} onAnchorChange={moveTodoAnchor} onSelectDate={setSelectedDates} onToggleTask={toggleTask} onUpdateHistoricalTask={updateHistoricalTask} onExport={exportSelectedMarkdown} />
         </main>
+      ) : view === 'review' ? (
+        <DailyReviewPage date={today} tasks={tasks} sessions={focusSessions[today] || []} review={dailyReviews[today]} onSave={saveDailyReview} />
       ) : (
         <main className="dashboard">
-          <TimerHero mode={mode} remaining={remaining} running={running} paused={paused} onToggle={toggleRunning} onReset={reset} onSkip={skip} />
+          <TimerHero mode={mode} remaining={remaining} running={running} paused={paused} targetOptions={availableTargets} currentTarget={resolvedCurrentTarget || focusTaskRef.current} focusElapsed={focusElapsed} onSelectTarget={selectFocusTarget} onToggle={toggleRunning} onReset={reset} onSkip={skip} onInterruptionReason={recordInterruptionReason} onFinishSession={finishCurrentFocus} />
           <TasksPanel tasks={tasks} setTasks={setTasks} onToggleTask={toggleTask} notice={notice} today={today} />
         </main>
       )}
-      <CompanionPet companion={primaryFriend} open={companionOpen} onClick={() => { setCompanionOpen((value) => !value); setSelectedCompanionId(primaryFriend.id); }} />
-      <CompanionPanel open={companionOpen} companions={companions} selectedId={selectedCompanionId} messages={companionMessages} togetherId={togetherCompanionId} onSelect={selectCompanion} onClose={() => setCompanionOpen(false)} onReaction={sendCompanionReaction} onSendMessage={sendCompanionMessage} onQuickMessage={sendCompanionQuickMessage} onChangeState={changeCompanionState} onStartTogether={startTogetherFocus} />
+      {view === 'today' && <CompanionPet companion={primaryFriend} open={companionOpen} onClick={() => { setCompanionOpen((value) => !value); setSelectedCompanionId(primaryFriend.id); }} />}
+      <CompanionPanel open={companionOpen && view === 'today'} companions={companions} selectedId={selectedCompanionId} messages={companionMessages} togetherId={togetherCompanionId} onSelect={selectCompanion} onClose={() => setCompanionOpen(false)} onReaction={sendCompanionReaction} onSendMessage={sendCompanionMessage} onQuickMessage={sendCompanionQuickMessage} onChangeState={changeCompanionState} onStartTogether={startTogetherFocus} />
       {companionNotice && <div className="companion-toast" role="status">{companionNotice}</div>}
       <footer className="bottom-bar glass-line">
         <div className="today-focus"><span>今日专注</span><strong>{todayFocusLabel}</strong></div>

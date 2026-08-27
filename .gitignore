@@ -1,4 +1,5 @@
 node_modules/
+_JJtomato_extract/
 electron-dist/
 release-*/
 release-local/
