@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  CalendarDays, Check, ClipboardCheck, Coffee, Download, ListTodo, MessageCircle, Minus, Pause, Play, Plus, RotateCcw,
+  CalendarDays, Check, ClipboardCheck, Coffee, Copy, Download, ListTodo, MessageCircle, Minus, Pause, Play, Plus, RotateCcw,
   Send, Settings, SkipForward, Square, Target, Trash2, Users, X,
 } from 'lucide-react';
 import { MINIMUM_FOCUS_SESSION_SECONDS, MODES, accumulatedFocusSeconds, formatTime, nextMode, progressOf, remainingSecondsAt, shouldPersistFocusSession } from '../core/timer.mjs';
@@ -10,6 +10,7 @@ import { loadJson, saveJson } from '../core/storage.mjs';
 import { addSubtask, buildDailyTodoMarkdown, buildMultiDayMarkdown, buildTimelineTaskGroups, completeTaskTree, consumeTaskTomatoes, dailyStatsForDate, daysForRange, flattenTaskTree, formatDuration, localDateKey, moveRangeAnchor, normalizePomodoros, normalizeTask, reopenTaskTree, rolloverTasksWithHistory, summarizeDay, summarizeTaskTree, toggleSubtaskCompletion, updateTaskInTree } from '../core/daily-todo.mjs';
 import { COMPANION_QUICK_MESSAGES, COMPANION_REACTIONS, COMPANION_STATES, DEFAULT_COMPANION_PRIVACY, INITIAL_COMPANION_MESSAGES, INITIAL_COMPANIONS, addCompanionMessage, companionActivityLabel, companionStateLabel, normalizeCompanion, primaryCompanion, updateCompanionState } from '../core/companion.mjs';
 import { INTERRUPTION_REASONS, createFocusSession, normalizeDailyReview, resolveTaskTarget, summarizeDailyReview, taskTargetOptions } from '../core/focus-review.mjs';
+import { appendRoomEvent, createCompanionRoom, createTogetherResult, normalizeCompanionRoom, setRoomMemberPermissions } from '../core/companion-room.mjs';
 
 const VISUAL = {
   focus: {
@@ -196,7 +197,7 @@ function CompanionPet({ companion, open, onClick }) {
   );
 }
 
-function CompanionPanel({ open, companions, selectedId, messages, togetherId, onSelect, onClose, onReaction, onSendMessage, onQuickMessage, onChangeState, onStartTogether }) {
+function CompanionPanel({ open, room, companions, selectedId, messages, togetherId, onSelect, onClose, onReaction, onSendMessage, onQuickMessage, onChangeState, onStartTogether, onCopyInvite, onMemberPermissionsChange }) {
   const [draft, setDraft] = useState('');
   const messageListRef = useRef(null);
   const selected = companions.find((item) => item.id === selectedId) || companions[0];
@@ -205,6 +206,7 @@ function CompanionPanel({ open, companions, selectedId, messages, togetherId, on
   const selectedMessages = messages.filter((message) => message.friendId === selected?.id).slice(-8);
   const latestMessageId = selectedMessages.at(-1)?.id;
   const friendListSize = companions.length > 4 ? 'many' : companions.length;
+  const member = room?.members?.find((item) => item.id === selected?.id);
   useEffect(() => {
     if (!messageListRef.current) return;
     messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
@@ -222,6 +224,7 @@ function CompanionPanel({ open, companions, selectedId, messages, togetherId, on
           <motion.aside className="companion-panel glass-panel" initial={{ opacity: 0, x: 24, scale: .98 }} animate={{ opacity: 1, x: 0, scale: 1 }} exit={{ opacity: 0, x: 24, scale: .98 }} transition={{ duration: .18 }} onMouseDown={(event) => event.stopPropagation()}>
             <div className="companion-panel-head"><div><span className="eyebrow">桌边陪伴</span><strong><Users size={15} /> 和朋友一起在场</strong></div><button className="companion-close" onClick={onClose} aria-label="关闭陪伴面板"><X size={16} /></button></div>
             <p className="companion-panel-note">看见她在，也让她知道你在。状态只按你的权限共享。</p>
+            <div className="companion-room-card"><div><strong>{room?.name || '桌边陪伴'}</strong><small>本地陪伴房 · 实时服务接入前仅保存在本机</small></div><code>{room?.inviteCode}</code><button type="button" onClick={onCopyInvite} aria-label="复制陪伴房邀请码"><Copy size={13} /> 复制邀请码</button></div>
             <div className={`companion-friend-list count-${friendListSize}`}>
               {companions.map((friend) => (
                 <button className={`companion-friend ${friend.id === selected?.id ? 'active' : ''}`} key={friend.id} onClick={() => onSelect(friend.id)}>
@@ -234,6 +237,7 @@ function CompanionPanel({ open, companions, selectedId, messages, togetherId, on
             {selected ? (
               <>
                 <div className="companion-selected"><span className={`companion-selected-icon state-${selected.state}`}>🐱</span><div><strong>{selected.name}</strong><small>{companionActivityLabel(selected)}{selected.state === 'typing' ? ' · 不显示输入内容' : ''}</small></div></div>
+                {member && <div className="companion-member-permissions"><span>对 {selected.name} 共享</span>{[['shareOnline', '在线'], ['shareTyping', '输入'], ['shareActivity', '活动'], ['shareTask', '任务']].map(([key, label]) => <label key={key}><input type="checkbox" checked={Boolean(member.permissions?.[key])} onChange={(event) => onMemberPermissionsChange(selected.id, key, event.target.checked)} />{label}</label>)}</div>}
                 <button className="companion-together" onClick={() => onStartTogether(selected.id)} disabled={selected.state === 'offline' || (isTogether && !isPausedTogether)}><span>🪑</span>{selected.state === 'offline' ? '等她回来再一起坐下' : isPausedTogether ? `和${selected.name}继续专注` : isTogether ? '正在一起专注' : `和${selected.name}一起坐下`}</button>
                 <div className="companion-actions" aria-label="陪伴互动">
                   <button onClick={() => onReaction(selected.id, 'tomato')}><span>🍅</span>送番茄</button>
@@ -253,6 +257,21 @@ function CompanionPanel({ open, companions, selectedId, messages, togetherId, on
           </motion.aside>
         </motion.div>
       )}
+    </AnimatePresence>
+  );
+}
+
+function TogetherResultCard({ result, onClose }) {
+  return (
+    <AnimatePresence>
+      {result && <motion.div className="together-result-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={onClose}>
+        <motion.section className="together-result glass-panel" initial={{ opacity: 0, y: 12, scale: .97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: .97 }} onMouseDown={(event) => event.stopPropagation()}>
+          <span>🐱 🤝 🐱</span><h2>一起坐下的小结</h2><strong>今天一起坐了 {result.minutes} 分钟</strong>
+          <p>你完成 {result.userCompletedTasks} 个任务<br />{result.friendName} 完成 {result.friendCompletedTasks} 个任务</p>
+          <small>共同结果只记录汇总，不共享你的任务内容。</small>
+          <button onClick={onClose}>收下这次击掌</button>
+        </motion.section>
+      </motion.div>}
     </AnimatePresence>
   );
 }
@@ -579,16 +598,22 @@ export default function App() {
   }));
   const [pendingDurationUpdate, setPendingDurationUpdate] = useState(false);
   const [companions, setCompanions] = useState(() => (loadJson(localStorage, 'tomato.companions', INITIAL_COMPANIONS) || INITIAL_COMPANIONS).map(normalizeCompanion));
+  const [companionRoom, setCompanionRoom] = useState(() => normalizeCompanionRoom(loadJson(localStorage, 'tomato.companionRoom', createCompanionRoom({
+    name: '桌边陪伴',
+    members: INITIAL_COMPANIONS.map((friend) => ({ id: friend.id, name: friend.name })),
+  }))));
   const [companionMessages, setCompanionMessages] = useState(() => loadJson(localStorage, 'tomato.companionMessages', INITIAL_COMPANION_MESSAGES) || INITIAL_COMPANION_MESSAGES);
   const [companionPrivacy, setCompanionPrivacy] = useState(() => ({ ...DEFAULT_COMPANION_PRIVACY, ...(loadJson(localStorage, 'tomato.companionPrivacy', {}) || {}) }));
   const [companionOpen, setCompanionOpen] = useState(false);
   const [selectedCompanionId, setSelectedCompanionId] = useState(() => (loadJson(localStorage, 'tomato.companions', INITIAL_COMPANIONS)?.[0]?.id || INITIAL_COMPANIONS[0].id));
   const [companionNotice, setCompanionNotice] = useState('');
   const [togetherCompanionId, setTogetherCompanionId] = useState(null);
+  const [togetherResult, setTogetherResult] = useState(null);
   const miniDeadlineRef = useRef(null);
   const timerRef = useRef(null);
   const deadlineRef = useRef(null);
   const togetherCompanionIdRef = useRef(null);
+  const togetherStartedAtRef = useRef(null);
   const focusStartedAtRef = useRef(null);
   const focusRunStartedAtRef = useRef(null);
   const focusActiveSecondsRef = useRef(0);
@@ -671,7 +696,19 @@ export default function App() {
   const endTogetherFocus = (activity = '准备开始', durationLabel = '刚刚') => {
     const friendId = togetherCompanionIdRef.current;
     if (!friendId) return;
+    const friend = companions.find((item) => item.id === friendId);
+    const startedAt = togetherStartedAtRef.current;
     updateCompanion(friendId, { state: 'online', activity, durationLabel });
+    if (friend && startedAt != null) {
+      const result = createTogetherResult({
+        friend,
+        startedAt,
+        userCompletedTasks: tasks.filter((task) => task.done).length,
+      });
+      setTogetherResult(result);
+      setCompanionRoom((room) => appendRoomEvent(room, { type: 'together:complete', senderId: 'me', receiverId: friendId, payload: result }));
+    }
+    togetherStartedAtRef.current = null;
     clearTogetherCompanion();
   };
 
@@ -802,7 +839,10 @@ export default function App() {
 
   const changeCompanionState = (id, state) => {
     const isActiveTogether = id === togetherCompanionIdRef.current;
-    if (isActiveTogether && state !== 'focusing') clearTogetherCompanion();
+    if (isActiveTogether && state !== 'focusing') {
+      togetherStartedAtRef.current = null;
+      clearTogetherCompanion();
+    }
     setCompanions((items) => items.map((item) => item.id === id
       ? updateCompanionState(item, state, state === 'typing' ? '正在敲键盘' : '')
       : item));
@@ -817,6 +857,7 @@ export default function App() {
     const reaction = COMPANION_REACTIONS[type];
     if (!friend || !reaction || companionPrivacy.shareReactions === false) return;
     setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', kind: 'reaction', text: `${reaction.emoji} ${reaction.text}`, createdAt: '刚刚' }));
+    setCompanionRoom((room) => appendRoomEvent(room, { type: `reaction:${type}`, senderId: 'me', receiverId: friendId }));
     flashCompanionNotice(`已送给${friend.name}${reaction.text}`);
   };
   const sendCompanionMessage = (friendId, text) => {
@@ -824,6 +865,7 @@ export default function App() {
     const trimmed = String(text || '').trim();
     if (!friend || !trimmed) return;
     setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', text: trimmed, createdAt: '刚刚' }));
+    setCompanionRoom((room) => appendRoomEvent(room, { type: 'message', senderId: 'me', receiverId: friendId, payload: { length: trimmed.length } }));
     flashCompanionNotice(`留言已送达${friend.name}`);
   };
   const sendCompanionQuickMessage = (friendId, text) => sendCompanionMessage(friendId, text);
@@ -848,6 +890,10 @@ export default function App() {
       setRunning(true);
     }
     setTogetherCompanion(friendId);
+    if (!wasTogether) {
+      togetherStartedAtRef.current = Date.now();
+      setCompanionRoom((room) => appendRoomEvent(room, { type: 'together:start', senderId: 'me', receiverId: friendId }));
+    }
     updateCompanion(friendId, { state: 'focusing', activity: '和你一起专注', durationLabel: '刚刚开始', unread: 0 });
     if (!wasTogether) setCompanionMessages((items) => addCompanionMessage(items, { friendId, sender: 'me', kind: 'reaction', text: `🪑 和${friend.name}一起坐下，开始专注`, createdAt: '刚刚' }));
     flashCompanionNotice(wasTogether ? `你和${friend.name}继续一起专注。` : `你和${friend.name}已经一起坐下，开始专注。`);
@@ -856,6 +902,15 @@ export default function App() {
   const selectCompanion = (id) => {
     setSelectedCompanionId(id);
     setCompanions((items) => items.map((item) => item.id === id ? { ...item, unread: 0 } : item));
+  };
+  const copyCompanionInvite = async () => {
+    const code = companionRoom?.inviteCode;
+    if (!code) return;
+    try { await navigator.clipboard?.writeText(code); flashCompanionNotice('邀请码已复制，发送给一位亲近的朋友即可。'); }
+    catch { flashCompanionNotice(`邀请码：${code}`); }
+  };
+  const changeRoomMemberPermissions = (friendId, key, value) => {
+    setCompanionRoom((room) => setRoomMemberPermissions(room, friendId, { [key]: value }));
   };
 
   const toggleTask = (task, parentId = null, targetDate = today) => {
@@ -1057,6 +1112,7 @@ export default function App() {
   useEffect(() => { saveJson(localStorage, 'tomato.dailyTodo', dailyHistory); }, [dailyHistory]);
   useEffect(() => { saveJson(localStorage, 'tomato.durations', durations); }, [durations]);
   useEffect(() => { saveJson(localStorage, 'tomato.companions', companions); }, [companions]);
+  useEffect(() => { saveJson(localStorage, 'tomato.companionRoom', companionRoom); }, [companionRoom]);
   useEffect(() => { saveJson(localStorage, 'tomato.companionMessages', companionMessages); }, [companionMessages]);
   useEffect(() => { saveJson(localStorage, 'tomato.companionPrivacy', companionPrivacy); }, [companionPrivacy]);
   useEffect(() => {
@@ -1123,7 +1179,8 @@ export default function App() {
         </main>
       )}
       {view === 'today' && <CompanionPet companion={primaryFriend} open={companionOpen} onClick={() => { setCompanionOpen((value) => !value); setSelectedCompanionId(primaryFriend.id); }} />}
-      <CompanionPanel open={companionOpen && view === 'today'} companions={companions} selectedId={selectedCompanionId} messages={companionMessages} togetherId={togetherCompanionId} onSelect={selectCompanion} onClose={() => setCompanionOpen(false)} onReaction={sendCompanionReaction} onSendMessage={sendCompanionMessage} onQuickMessage={sendCompanionQuickMessage} onChangeState={changeCompanionState} onStartTogether={startTogetherFocus} />
+      <CompanionPanel open={companionOpen && view === 'today'} room={companionRoom} companions={companions} selectedId={selectedCompanionId} messages={companionMessages} togetherId={togetherCompanionId} onSelect={selectCompanion} onClose={() => setCompanionOpen(false)} onReaction={sendCompanionReaction} onSendMessage={sendCompanionMessage} onQuickMessage={sendCompanionQuickMessage} onChangeState={changeCompanionState} onStartTogether={startTogetherFocus} onCopyInvite={copyCompanionInvite} onMemberPermissionsChange={changeRoomMemberPermissions} />
+      <TogetherResultCard result={togetherResult} onClose={() => setTogetherResult(null)} />
       {companionNotice && <div className="companion-toast" role="status">{companionNotice}</div>}
       <footer className="bottom-bar glass-line">
         <div className="today-focus"><span>今日专注</span><strong>{todayFocusLabel}</strong></div>
