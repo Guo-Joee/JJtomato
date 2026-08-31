@@ -482,8 +482,9 @@ kbd { padding: 3px 7px; border-radius: 7px; background: rgba(255,255,255,.45); b
 }
 
 /* 桌边陪伴：小猫是入口，面板只在用户点击后展开，不抢占任务和计时器。 */
-.companion-pet { position: absolute; z-index: 18; right: 20px; bottom: 73px; width: 74px; height: 70px; padding: 0; border: 1px solid rgba(255,255,255,.72); border-radius: 24px; color: var(--ink); background: rgba(255,250,243,.58); box-shadow: 0 12px 28px rgba(100,56,48,.14), inset 0 1px rgba(255,255,255,.75); backdrop-filter: blur(16px) saturate(1.08); -webkit-backdrop-filter: blur(16px) saturate(1.08); transition: transform .2s ease, box-shadow .2s ease; }
+.companion-pet { position: absolute; z-index: 16; right: 20px; bottom: 73px; width: 74px; height: 70px; padding: 0; border: 1px solid rgba(255,255,255,.72); border-radius: 24px; color: var(--ink); background: rgba(255,250,243,.58); box-shadow: 0 12px 28px rgba(100,56,48,.14), inset 0 1px rgba(255,255,255,.75); backdrop-filter: blur(16px) saturate(1.08); -webkit-backdrop-filter: blur(16px) saturate(1.08); transition: transform .2s ease, box-shadow .2s ease, opacity .16s ease; }
 .companion-pet:hover, .companion-pet.open { transform: translateY(-3px); box-shadow: 0 16px 34px rgba(100,56,48,.18), inset 0 1px rgba(255,255,255,.75); }
+.companion-pet.open { opacity: 0; pointer-events: none; transform: none; }
 .companion-pet-aura { position: absolute; inset: 7px; border-radius: 18px; background: radial-gradient(circle at 50% 22%, rgba(255,255,255,.82), transparent 66%); pointer-events: none; }
 .companion-cat { position: absolute; inset: 7px 7px 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1; }
 .companion-cat-face { position: relative; z-index: 1; font-size: 31px; filter: drop-shadow(0 3px 3px rgba(100,56,48,.10)); }

@@ -42,8 +42,11 @@ function publicUser(user) {
   return { id: user.id, username: user.username, displayName: user.displayName, createdAt: user.createdAt };
 }
 
-function publicMember(user, member) {
-  return { ...publicUser(user), joinedAt: member.joinedAt, permissions: normalizeMemberPermissions(member.permissions) };
+function publicMember(user, member, viewerMember) {
+  // Privacy is directional: the viewer chooses what to share with each friend.
+  // Keep the former `permissions` field as a migration fallback for existing data.
+  const pairPermissions = viewerMember?.permissionsByMember?.[member.userId];
+  return { ...publicUser(user), joinedAt: member.joinedAt, permissions: normalizeMemberPermissions(pairPermissions || member.permissions) };
 }
 
 export class CompanionService {
@@ -85,7 +88,7 @@ export class CompanionService {
     if (!owner) throw new Error('账号不存在。');
     let inviteCode = createRoomInviteCode(this.random);
     while (this.data.rooms.some((room) => room.inviteCode === inviteCode)) inviteCode = createRoomInviteCode(this.random);
-    const room = { id: id('room'), name: cleanRoomName(name), inviteCode, ownerId, createdAt: this.now(), members: [{ userId: ownerId, joinedAt: this.now(), permissions: normalizeMemberPermissions() }] };
+    const room = { id: id('room'), name: cleanRoomName(name), inviteCode, ownerId, createdAt: this.now(), members: [{ userId: ownerId, joinedAt: this.now(), permissions: normalizeMemberPermissions(), permissionsByMember: {} }] };
     this.data.rooms.push(room);
     return this.roomFor(ownerId, room.id);
   }
@@ -99,7 +102,7 @@ export class CompanionService {
       inviteCode: room.inviteCode,
       ownerId: room.ownerId,
       createdAt: room.createdAt,
-      members: room.members.map((member) => publicMember(this.data.users.find((user) => user.id === member.userId), member)).filter(Boolean),
+      members: room.members.map((member) => publicMember(this.data.users.find((user) => user.id === member.userId), member, room.members.find((item) => item.userId === userId))).filter(Boolean),
     };
   }
 
@@ -114,7 +117,7 @@ export class CompanionService {
     if (!room.members.some((member) => member.userId === userId)) {
       if (room.members.length >= MAX_ROOM_MEMBERS) throw new Error('这间陪伴房已满。');
       const existingIds = room.members.map((member) => member.userId);
-      room.members.push({ userId, joinedAt: this.now(), permissions: normalizeMemberPermissions() });
+      room.members.push({ userId, joinedAt: this.now(), permissions: normalizeMemberPermissions(), permissionsByMember: {} });
       existingIds.forEach((friendId) => this.addFriendship(userId, friendId));
     }
     return this.roomFor(userId, room.id);
@@ -133,19 +136,26 @@ export class CompanionService {
 
   setMemberPermissions(userId, roomId, memberId, patch) {
     const room = this.data.rooms.find((item) => item.id === roomId && item.members.some((member) => member.userId === userId));
+    const ownerMember = room?.members.find((item) => item.userId === userId);
     const member = room?.members.find((item) => item.userId === memberId);
-    if (!member) throw new Error('未找到陪伴房成员。');
-    member.permissions = normalizeMemberPermissions({ ...member.permissions, ...patch });
+    if (!ownerMember || !member || member.userId === userId) throw new Error('未找到可配置的陪伴房成员。');
+    ownerMember.permissionsByMember = {
+      ...(ownerMember.permissionsByMember || {}),
+      [memberId]: normalizeMemberPermissions({ ...(ownerMember.permissionsByMember?.[memberId] || ownerMember.permissions), ...patch }),
+    };
     return this.roomFor(userId, roomId);
   }
 
-  sendMessage(userId, roomId, { text, kind = 'text', receiverId = null } = {}) {
+  sendMessage(userId, roomId, { text, kind = 'text', receiverId = null, clientEventId = null } = {}) {
     const room = this.data.rooms.find((item) => item.id === roomId && item.members.some((member) => member.userId === userId));
     const normalizedText = String(text || '').trim().slice(0, 300);
     if (!room) throw new Error('你不在这间陪伴房中。');
     if (!normalizedText) throw new Error('留言不能为空。');
     if (receiverId && !room.members.some((member) => member.userId === receiverId)) throw new Error('收件人不在这间陪伴房中。');
-    const message = { id: id('message'), roomId, senderId: userId, receiverId, kind: kind === 'reaction' ? 'reaction' : 'text', text: normalizedText, createdAt: this.now() };
+    const normalizedEventId = clientEventId == null ? null : String(clientEventId).trim().slice(0, 100);
+    const duplicate = normalizedEventId && this.data.messages.find((message) => message.roomId === roomId && message.senderId === userId && message.clientEventId === normalizedEventId);
+    if (duplicate) return this.publicMessage(duplicate);
+    const message = { id: id('message'), roomId, senderId: userId, receiverId, kind: kind === 'reaction' ? 'reaction' : 'text', text: normalizedText, clientEventId: normalizedEventId, createdAt: this.now() };
     this.data.messages.push(message);
     const roomMessages = this.data.messages.filter((item) => item.roomId === roomId);
     if (roomMessages.length > MAX_MESSAGES) {

@@ -70,7 +70,7 @@ test('计时状态只能由主窗口发布，小窗不能反向发送默认时�
 
 test('软件品牌名称为 JJtomato', () => {
   assert.equal(pkg.name, 'jjtomato');
-  assert.equal(pkg.version, '0.1.23');
+  assert.equal(pkg.version, '0.2.1');
   assert.match(app, />JJtomato</);
   assert.match(main, /title: 'JJtomato'/);
 });
@@ -291,7 +291,7 @@ test('v0.1.18 提供桌边陪伴小猫和好友状态面板', () => {
   assert.match(css, /companion-cat-type/);
 });
 
-test('v0.1.23 提供可启动的实时陪伴服务与账号入口', () => {
+test('v0.2.1 提供可启动的实时陪伴服务与账号入口', () => {
   const packageJson = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
   const server = fs.readFileSync(path.join(root, 'server/companion-server.mjs'), 'utf8');
   assert.match(packageJson, /"companion-server"/);
@@ -315,10 +315,13 @@ test('陪伴支持送番茄、快捷互动和短消息', () => {
   assert.match(app, /sendCompanionMessage/);
 });
 
-test('陪伴面板可以本地发起一起坐下并立即开始专注', () => {
+test('陪伴面板支持本地开始和实时邀请确认后的一起专注', () => {
   assert.match(app, /startTogetherFocus/);
   assert.match(app, /和\$\{selected\.name\}一起坐下/);
-  assert.match(app, /disabled=\{selected\.state === 'offline' \|\| \(isTogether && !isPausedTogether\)\}/);
+  assert.match(app, /inviteStatus === 'incoming'/);
+  assert.match(app, /shared-focus\.invited/);
+  assert.match(app, /shared-focus\.joined/);
+  assert.match(app, /disabled=\{selected\.state === 'offline' \|\| \(isTogether && !isPausedTogether\) \|\| inviteStatus === 'outgoing'\}/);
   assert.match(app, /正在一起专注/);
   assert.match(app, /activity: '和你一起专注'/);
   assert.match(app, /setMode\('focus'\)/);

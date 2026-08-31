@@ -32,6 +32,18 @@ test('陪伴房仅允许成员同步消息，成员权限可以独立更新', ()
   const member = updated.members.find((item) => item.id === friend.id);
   assert.equal(member.permissions.shareTyping, false);
   assert.equal(member.permissions.shareTask, true);
+  const reverseView = service.roomFor(friend.id, room.id).members.find((item) => item.id === owner.id);
+  assert.equal(reverseView.permissions.shareTyping, true, '一方的共享偏好不应改写另一方的偏好');
+});
+
+test('消息以 clientEventId 幂等去重，重试不会制造重复留言', () => {
+  const service = new CompanionService();
+  const owner = service.createUser({ username: 'owner2', displayName: '房主', passwordHash: 'hash' });
+  const room = service.createRoom(owner.id, '房间');
+  const first = service.sendMessage(owner.id, room.id, { text: '同一条消息', clientEventId: 'msg-retry-1' });
+  const retry = service.sendMessage(owner.id, room.id, { text: '同一条消息', clientEventId: 'msg-retry-1' });
+  assert.equal(first.id, retry.id);
+  assert.equal(service.listMessages(owner.id, room.id).length, 1);
 });
 
 test('邀请码易读且断线重连使用有上限的退避间隔', () => {

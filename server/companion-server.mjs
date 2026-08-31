@@ -11,6 +11,12 @@ const port = Number(process.env.COMPANION_PORT || 4179);
 const tokenSecret = process.env.COMPANION_TOKEN_SECRET || 'development-only-change-me';
 const sockets = new Map();
 const presence = new Map();
+const sharedFocusEvents = new Set();
+const PRESENCE_TTL_MS = 35_000;
+
+function sanitizeActivity(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+}
 
 async function loadData() {
   try { return JSON.parse(await readFile(dataFile, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
@@ -64,6 +70,35 @@ function frameLength(length) {
 function broadcast(roomId, message) {
   for (const connection of sockets.values()) if (connection.rooms.has(roomId)) send(connection.socket, message);
 }
+function broadcastToParticipants(roomId, participantIds, message) {
+  if (participantIds.includes(null)) return broadcast(roomId, message);
+  const allowed = new Set(participantIds.filter(Boolean));
+  for (const connection of sockets.values()) if (connection.rooms.has(roomId) && allowed.has(connection.user.id)) send(connection.socket, message);
+}
+function updatePresence(userId, patch) {
+  const previous = presence.get(userId);
+  const next = { state: 'online', activity: '', isTyping: false, updatedAt: Date.now(), stateVersion: Number(previous?.stateVersion || 0) + 1, ...patch };
+  presence.set(userId, next);
+  return next;
+}
+function broadcastPresence(userId, next) {
+  for (const connection of sockets.values()) {
+    if (connection.user.id === userId) continue;
+    const sharedRoom = service.listRooms(userId).find((room) => connection.rooms.has(room.id) && room.members.some((member) => member.id === connection.user.id));
+    if (!sharedRoom) continue;
+    const permissions = sharedRoom.members.find((member) => member.id === connection.user.id)?.permissions || {};
+    if (!permissions.shareOnline) continue;
+    send(connection.socket, {
+      type: 'presence.updated',
+      userId,
+      presence: {
+        ...next,
+        activity: permissions.shareActivity ? next.activity : '',
+        isTyping: permissions.shareTyping ? next.isTyping : false,
+      },
+    });
+  }
+}
 function decodeFrames(buffer, onMessage) {
   let offset = 0;
   while (offset + 2 <= buffer.length) {
@@ -98,11 +133,11 @@ const server = createServer(async (request, response) => {
     const user = authenticate(request); if (!user) return json(response, 401, { error: '请先登录。' });
     if (request.method === 'GET' && url.pathname === '/api/me') return json(response, 200, { user, rooms: service.listRooms(user.id), friends: service.listFriends(user.id) });
     if (request.method === 'POST' && url.pathname === '/api/rooms') { const room = service.createRoom(user.id, body.name); await persist(); return json(response, 201, { room }); }
-    if (request.method === 'POST' && url.pathname === '/api/rooms/join') { const room = service.joinRoom(user.id, body.inviteCode); await persist(); broadcast(room.id, { type: 'room:member', room }); return json(response, 200, { room }); }
+    if (request.method === 'POST' && url.pathname === '/api/rooms/join') { const room = service.joinRoom(user.id, body.inviteCode); await persist(); broadcast(room.id, { type: 'room:changed' }); return json(response, 200, { room }); }
     const roomMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)(?:\/(messages|permissions\/([^/]+)))?$/);
     if (roomMatch && request.method === 'GET' && roomMatch[2] === 'messages') return json(response, 200, { messages: service.listMessages(user.id, roomMatch[1], url.searchParams.get('after')) });
-    if (roomMatch && request.method === 'POST' && roomMatch[2] === 'messages') { const message = service.sendMessage(user.id, roomMatch[1], body); await persist(); broadcast(roomMatch[1], { type: 'message', message }); return json(response, 201, { message }); }
-    if (roomMatch && request.method === 'PATCH' && roomMatch[3]) { const room = service.setMemberPermissions(user.id, roomMatch[1], roomMatch[3], body.permissions); await persist(); broadcast(room.id, { type: 'room:permissions', room }); return json(response, 200, { room }); }
+    if (roomMatch && request.method === 'POST' && roomMatch[2] === 'messages') { const message = service.sendMessage(user.id, roomMatch[1], body); await persist(); broadcastToParticipants(roomMatch[1], [message.senderId, message.receiverId], { type: 'message', message }); return json(response, 201, { message }); }
+    if (roomMatch && request.method === 'PATCH' && roomMatch[3]) { const room = service.setMemberPermissions(user.id, roomMatch[1], roomMatch[3], body.permissions); await persist(); broadcast(room.id, { type: 'room:changed' }); return json(response, 200, { room }); }
     return json(response, 404, { error: '未找到接口。' });
   } catch (error) { return json(response, 400, { error: error.message || '请求无效。' }); }
 });
@@ -120,14 +155,34 @@ server.on('upgrade', (request, socket) => {
       if (event.type === 'subscribe' && service.roomFor(user.id, event.roomId)) connection.rooms.add(event.roomId);
       if (event.type === 'presence') {
         const state = ['online', 'focusing', 'typing', 'paused', 'away'].includes(event.state) ? event.state : 'online';
-        presence.set(user.id, { state, activity: cleanName(event.activity).slice(0, 80), isTyping: Boolean(event.isTyping), updatedAt: Date.now() });
-        for (const roomId of connection.rooms) broadcast(roomId, { type: 'presence', userId: user.id, presence: presence.get(user.id) });
+        broadcastPresence(user.id, updatePresence(user.id, { state, activity: sanitizeActivity(event.activity), isTyping: Boolean(event.isTyping) }));
       }
-      if (event.type === 'typing' && connection.rooms.has(event.roomId)) broadcast(event.roomId, { type: 'typing', userId: user.id, isTyping: Boolean(event.isTyping) });
-      if (event.type === 'message' && connection.rooms.has(event.roomId)) { const message = service.sendMessage(user.id, event.roomId, event); await persist(); broadcast(event.roomId, { type: 'message', message }); }
+      if (event.type === 'typing' && connection.rooms.has(event.roomId)) {
+        const current = presence.get(user.id) || {};
+        broadcastPresence(user.id, updatePresence(user.id, { ...current, isTyping: Boolean(event.isTyping), updatedAt: Date.now() }));
+      }
+      if (event.type === 'message' && connection.rooms.has(event.roomId)) { const message = service.sendMessage(user.id, event.roomId, event); await persist(); broadcastToParticipants(event.roomId, [message.senderId, message.receiverId], { type: 'message', message }); }
+      if (['shared-focus.invited', 'shared-focus.joined', 'shared-focus.left'].includes(event.type) && connection.rooms.has(event.roomId)) {
+        const clientEventId = String(event.clientEventId || '').trim().slice(0, 100);
+        const receiverId = String(event.receiverId || '');
+        const room = service.roomFor(user.id, event.roomId);
+        if (!clientEventId || !receiverId || !room?.members.some((member) => member.id === receiverId) || sharedFocusEvents.has(`${user.id}:${clientEventId}`)) return;
+        sharedFocusEvents.add(`${user.id}:${clientEventId}`);
+        if (sharedFocusEvents.size > 1000) sharedFocusEvents.delete(sharedFocusEvents.values().next().value);
+        broadcastToParticipants(event.roomId, [user.id, receiverId], { type: event.type, roomId: event.roomId, senderId: user.id, receiverId, clientEventId, status: String(event.status || '').slice(0, 20), createdAt: Date.now() });
+      }
     } catch (error) { send(socket, { type: 'error', error: error.message || '操作失败。' }); }
   }); });
-  socket.on('close', () => { sockets.delete(socket); presence.set(user.id, { state: 'offline', activity: '', isTyping: false, updatedAt: Date.now() }); for (const roomId of connection.rooms) broadcast(roomId, { type: 'presence', userId: user.id, presence: presence.get(user.id) }); });
+  socket.on('close', () => {
+    sockets.delete(socket);
+    if (![...sockets.values()].some((item) => item.user.id === user.id)) broadcastPresence(user.id, updatePresence(user.id, { state: 'offline', activity: '', isTyping: false }));
+  });
   socket.on('error', () => socket.destroy());
 });
 server.listen(port, '0.0.0.0', () => console.log(`JJtomato companion server listening on ${port}`));
+
+setInterval(() => {
+  for (const [userId, value] of presence) {
+    if (value.state !== 'offline' && Date.now() - value.updatedAt > PRESENCE_TTL_MS) broadcastPresence(userId, updatePresence(userId, { state: 'offline', activity: '', isTyping: false }));
+  }
+}, 5000).unref();
