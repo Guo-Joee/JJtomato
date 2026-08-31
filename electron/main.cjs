@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, Notification, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, Notification, safeStorage, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -14,6 +14,27 @@ if (!gotSingleInstanceLock) app.quit();
 
 const isDev = !app.isPackaged;
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
+const companionSessionPath = () => path.join(app.getPath('userData'), 'companion-session.bin');
+
+function normalizeCompanionSession(value) {
+  if (!value || typeof value !== 'object' || typeof value.token !== 'string' || !value.token.trim() || !value.user || typeof value.user.id !== 'string') return null;
+  return { token: value.token.trim().slice(0, 4096), user: { id: value.user.id, username: String(value.user.username || ''), displayName: String(value.user.displayName || '') } };
+}
+
+function saveCompanionSession(value) {
+  const session = normalizeCompanionSession(value);
+  if (!session) return false;
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('当前系统不支持安全存储，无法保存登录状态。');
+  fs.writeFileSync(companionSessionPath(), safeStorage.encryptString(JSON.stringify(session)).toString('base64'), 'utf8');
+  return true;
+}
+
+function loadCompanionSession() {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return null;
+    return normalizeCompanionSession(JSON.parse(safeStorage.decryptString(Buffer.from(fs.readFileSync(companionSessionPath(), 'utf8'), 'base64'))));
+  } catch { return null; }
+}
 
 function windowMaterial(win) {
   if (process.platform === 'win32' && typeof win.setBackgroundMaterial === 'function') {
@@ -264,6 +285,8 @@ if (gotSingleInstanceLock) app.whenReady().then(() => {
     try { return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); }
     catch { return null; }
   });
+  ipcMain.handle('companion-session:save', (_event, value) => saveCompanionSession(value));
+  ipcMain.handle('companion-session:load', () => loadCompanionSession());
   ipcMain.handle('timer:get-state', () => latestTimerState);
   ipcMain.on('timer:state', (_event, state) => {
     latestTimerState = state;

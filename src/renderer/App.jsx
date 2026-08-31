@@ -644,7 +644,7 @@ export default function App() {
   const [companionMessages, setCompanionMessages] = useState(() => loadJson(localStorage, 'tomato.companionMessages', INITIAL_COMPANION_MESSAGES) || INITIAL_COMPANION_MESSAGES);
   const [companionPrivacy, setCompanionPrivacy] = useState(() => ({ ...DEFAULT_COMPANION_PRIVACY, ...(loadJson(localStorage, 'tomato.companionPrivacy', {}) || {}) }));
   const [companionServer, setCompanionServer] = useState(() => loadJson(localStorage, 'tomato.companionServer', companionServerUrl()) || companionServerUrl());
-  const [companionSession, setCompanionSession] = useState(() => loadJson(localStorage, 'tomato.companionSession', null));
+  const [companionSession, setCompanionSession] = useState(null);
   const [companionConnection, setCompanionConnection] = useState({ connected: false, reconnecting: false });
   const [companionOpen, setCompanionOpen] = useState(false);
   const [selectedCompanionId, setSelectedCompanionId] = useState(() => (loadJson(localStorage, 'tomato.companions', INITIAL_COMPANIONS)?.[0]?.id || INITIAL_COMPANIONS[0].id));
@@ -676,6 +676,22 @@ export default function App() {
     setCompanions((items) => items.map((item) => item.activity === '和你一起专注'
       ? updateCompanionState(item, 'online')
       : item));
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const restoreSession = async () => {
+      const secured = await window.tomatoDesktop?.loadCompanionSession?.().catch(() => null);
+      const legacy = loadJson(localStorage, 'tomato.companionSession', null);
+      const session = secured || legacy;
+      if (!active || !session) return;
+      setCompanionSession(session);
+      if (!secured && window.tomatoDesktop?.saveCompanionSession) {
+        window.tomatoDesktop.saveCompanionSession(session).then(() => localStorage.removeItem('tomato.companionSession')).catch(() => {});
+      }
+    };
+    restoreSession();
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -1315,7 +1331,11 @@ export default function App() {
   useEffect(() => { saveJson(localStorage, 'tomato.companionMessages', companionMessages); }, [companionMessages]);
   useEffect(() => { saveJson(localStorage, 'tomato.companionPrivacy', companionPrivacy); }, [companionPrivacy]);
   useEffect(() => { saveJson(localStorage, 'tomato.companionServer', companionServer); }, [companionServer]);
-  useEffect(() => { saveJson(localStorage, 'tomato.companionSession', companionSession); }, [companionSession]);
+  useEffect(() => {
+    if (!companionSession) return;
+    if (window.tomatoDesktop?.saveCompanionSession) { window.tomatoDesktop.saveCompanionSession(companionSession).catch(() => {}); return; }
+    saveJson(localStorage, 'tomato.companionSession', companionSession);
+  }, [companionSession]);
   useEffect(() => {
     saveJson(localStorage, 'tomato.opacity', opacity);
     window.tomatoDesktop?.setOpacity(opacity);

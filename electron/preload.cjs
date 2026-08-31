@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('tomatoDesktop', {
   quit: () => ipcRenderer.invoke('app:quit'),
   saveSettings: (settings) => ipcRenderer.invoke('store:settings', settings),
   loadSettings: () => ipcRenderer.invoke('store:load-settings'),
+  saveCompanionSession: (session) => ipcRenderer.invoke('companion-session:save', session),
+  loadCompanionSession: () => ipcRenderer.invoke('companion-session:load'),
   getTimerState: () => ipcRenderer.invoke('timer:get-state'),
   notify: (title, body) => ipcRenderer.invoke('app:notify', { title, body }),
   onMiniState: (callback) => {

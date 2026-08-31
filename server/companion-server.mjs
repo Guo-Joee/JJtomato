@@ -8,11 +8,15 @@ import { CompanionService } from './companion-service.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dataFile = process.env.COMPANION_DATA_FILE || resolve(root, 'server', 'data', 'companion-data.json');
 const port = Number(process.env.COMPANION_PORT || 4179);
-const tokenSecret = process.env.COMPANION_TOKEN_SECRET || 'development-only-change-me';
+const defaultTokenSecret = 'development-only-change-me';
+const tokenSecret = process.env.COMPANION_TOKEN_SECRET || defaultTokenSecret;
+const host = process.env.COMPANION_HOST || (tokenSecret === defaultTokenSecret ? '127.0.0.1' : '0.0.0.0');
 const sockets = new Map();
 const presence = new Map();
 const sharedFocusEvents = new Set();
 const PRESENCE_TTL_MS = 35_000;
+const MAX_HTTP_BODY_BYTES = 16 * 1024;
+const MAX_WS_BUFFER_BYTES = 32 * 1024;
 
 function sanitizeActivity(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 80);
@@ -100,6 +104,7 @@ function broadcastPresence(userId, next) {
   }
 }
 function decodeFrames(buffer, onMessage) {
+  if (buffer.length > MAX_WS_BUFFER_BYTES) return Buffer.alloc(0);
   let offset = 0;
   while (offset + 2 <= buffer.length) {
     const first = buffer[offset]; const second = buffer[offset + 1]; let length = second & 127; let cursor = offset + 2;
@@ -109,7 +114,7 @@ function decodeFrames(buffer, onMessage) {
     const mask = masked ? buffer.subarray(cursor, cursor + 4) : null; cursor += masked ? 4 : 0;
     const payload = buffer.subarray(cursor, cursor + length); if (mask) for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4];
     offset = cursor + length;
-    if ((first & 15) === 1) { try { onMessage(JSON.parse(payload.toString())); } catch { /* malformed input is ignored */ } }
+    if ((first & 15) === 1 && payload.length <= MAX_HTTP_BODY_BYTES) { try { onMessage(JSON.parse(payload.toString())); } catch { /* malformed input is ignored */ } }
   }
   return buffer.subarray(offset);
 }
@@ -119,7 +124,8 @@ const server = createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
     if (request.method === 'OPTIONS') return json(response, 204, {});
     if (request.method === 'GET' && url.pathname === '/health') return json(response, 200, { ok: true });
-    const chunks = []; for await (const chunk of request) chunks.push(chunk);
+    const chunks = []; let bodySize = 0;
+    for await (const chunk of request) { bodySize += chunk.length; if (bodySize > MAX_HTTP_BODY_BYTES) throw new Error('请求内容过大。'); chunks.push(chunk); }
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
     if (request.method === 'POST' && url.pathname === '/api/auth/register') {
       if (String(body.password || '').length < 8) return json(response, 400, { error: '密码至少需要 8 位。' });
@@ -179,7 +185,7 @@ server.on('upgrade', (request, socket) => {
   });
   socket.on('error', () => socket.destroy());
 });
-server.listen(port, '0.0.0.0', () => console.log(`JJtomato companion server listening on ${port}`));
+server.listen(port, host, () => console.log(`JJtomato companion server listening on ${host}:${port}`));
 
 setInterval(() => {
   for (const [userId, value] of presence) {

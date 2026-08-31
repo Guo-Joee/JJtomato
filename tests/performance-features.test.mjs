@@ -294,12 +294,18 @@ test('v0.1.18 提供桌边陪伴小猫和好友状态面板', () => {
 test('v0.2.1 提供可启动的实时陪伴服务与账号入口', () => {
   const packageJson = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
   const server = fs.readFileSync(path.join(root, 'server/companion-server.mjs'), 'utf8');
+  const preload = fs.readFileSync(path.join(root, 'electron/preload.cjs'), 'utf8');
   assert.match(packageJson, /"companion-server"/);
   assert.match(app, /CompanionConnectionCard/);
   assert.match(app, /createRealtimeConnection/);
   assert.match(server, /\/api\/auth\/register/);
   assert.match(server, /\/api\/rooms\/join/);
   assert.match(server, /\/realtime/);
+  assert.match(server, /MAX_HTTP_BODY_BYTES/);
+  assert.match(server, /127\.0\.0\.1/);
+  assert.match(preload, /saveCompanionSession/);
+  assert.match(app, /window\.tomatoDesktop\?\.saveCompanionSession/);
+  assert.match(app, /window\.tomatoDesktop\?\.loadCompanionSession/);
 });
 
 test('陪伴支持送番茄、快捷互动和短消息', () => {
