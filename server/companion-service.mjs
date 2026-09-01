@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 const MAX_ROOM_MEMBERS = 8;
 const MAX_MESSAGES = 500;
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const AVATAR_IDS = new Set(['american-shorthair', 'maine-coon', 'ragdoll', 'shiba', 'teddy-bear', 'lop-bunny', 'tomato', 'apple', 'strawberry', 'monstera', 'sunflower', 'cactus']);
 
 export const DEFAULT_MEMBER_PERMISSIONS = Object.freeze({
   shareOnline: true,
@@ -39,7 +40,7 @@ export function normalizeMemberPermissions(input = {}) {
 }
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, displayName: user.displayName, createdAt: user.createdAt };
+  return { id: user.id, username: user.username, displayName: user.displayName, avatarId: AVATAR_IDS.has(user.avatarId) ? user.avatarId : 'american-shorthair', createdAt: user.createdAt };
 }
 
 function publicMember(user, member, viewerMember) {
@@ -65,11 +66,11 @@ export class CompanionService {
     return structuredClone(this.data);
   }
 
-  createUser({ username, displayName, passwordHash }) {
+  createUser({ username, displayName, passwordHash, avatarId }) {
     const normalizedUsername = cleanName(username).toLowerCase();
     if (!/^[a-z0-9_-]{3,24}$/.test(normalizedUsername)) throw new Error('用户名需为 3-24 位字母、数字、下划线或短横线。');
     if (this.data.users.some((user) => user.username === normalizedUsername)) throw new Error('这个用户名已被使用。');
-    const user = { id: id('user'), username: normalizedUsername, displayName: cleanName(displayName, normalizedUsername), passwordHash: String(passwordHash || ''), createdAt: this.now() };
+    const user = { id: id('user'), username: normalizedUsername, displayName: cleanName(displayName, normalizedUsername), avatarId: AVATAR_IDS.has(avatarId) ? avatarId : 'american-shorthair', passwordHash: String(passwordHash || ''), createdAt: this.now() };
     this.data.users.push(user);
     return publicUser(user);
   }

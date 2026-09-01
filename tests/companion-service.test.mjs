@@ -50,3 +50,13 @@ test('邀请码易读且断线重连使用有上限的退避间隔', () => {
   assert.equal(createRoomInviteCode(() => 0.999), 'JJ-9999-9999');
   assert.deepEqual([0, 1, 2, 3, 4, 9].map((attempt) => nextReconnectDelay(attempt)), [1000, 2000, 4000, 8000, 15000, 15000]);
 });
+
+test('植物和水果角色会随账号资料和陪伴房成员同步', () => {
+  const service = new CompanionService({}, { random: () => 0 });
+  const tomato = service.createUser({ username: 'tomato_user', displayName: '小番茄', passwordHash: 'hash', avatarId: 'tomato' });
+  const apple = service.createUser({ username: 'apple_user', displayName: '小苹果', passwordHash: 'hash', avatarId: 'apple' });
+  const room = service.createRoom(tomato.id, '果实自习室');
+  const joined = service.joinRoom(apple.id, room.inviteCode);
+  assert.equal(tomato.avatarId, 'tomato');
+  assert.equal(joined.members.find((member) => member.id === apple.id).avatarId, 'apple');
+});

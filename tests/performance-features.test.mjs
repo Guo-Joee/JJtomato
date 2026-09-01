@@ -70,7 +70,7 @@ test('计时状态只能由主窗口发布，小窗不能反向发送默认时�
 
 test('软件品牌名称为 JJtomato', () => {
   assert.equal(pkg.name, 'jjtomato');
-  assert.equal(pkg.version, '0.2.1');
+  assert.equal(pkg.version, '0.2.2');
   assert.match(app, />JJtomato</);
   assert.match(main, /title: 'JJtomato'/);
 });

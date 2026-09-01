@@ -13,6 +13,37 @@ import { INTERRUPTION_REASONS, createFocusSession, normalizeDailyReview, resolve
 import { appendRoomEvent, createCompanionRoom, createTogetherResult, normalizeCompanionRoom, setRoomMemberPermissions } from '../core/companion-room.mjs';
 import { companionRequest, companionServerUrl, createRealtimeConnection } from '../core/companion-realtime.mjs';
 import { createClientEventId, shouldApplyPresence } from '../core/companion-sync.mjs';
+import { avatarFrameAt } from '../core/avatar-animation.mjs';
+import { CHARACTER_OPTIONS, characterOption, normalizeCharacterProfile } from '../core/character-profile.mjs';
+import companionPortraitSheet from '../../assets/characters/companion-portraits-v1.png';
+import companionNaturePortraitSheet from '../../assets/characters/companion-nature-portraits-v1.png';
+import americanShorthairAtlas from '../../assets/characters/atlases/formal/american-shorthair.webp';
+import maineCoonAtlas from '../../assets/characters/atlases/formal/maine-coon.webp';
+import ragdollAtlas from '../../assets/characters/atlases/formal/ragdoll.webp';
+import shibaAtlas from '../../assets/characters/atlases/formal/shiba.webp';
+import teddyBearAtlas from '../../assets/characters/atlases/formal/teddy-bear.webp';
+import lopBunnyAtlas from '../../assets/characters/atlases/formal/lop-bunny.webp';
+import tomatoAtlas from '../../assets/characters/atlases/formal/tomato.webp';
+import appleAtlas from '../../assets/characters/atlases/formal/apple.webp';
+import strawberryAtlas from '../../assets/characters/atlases/formal/strawberry.webp';
+import monsteraAtlas from '../../assets/characters/atlases/formal/monstera.webp';
+import sunflowerAtlas from '../../assets/characters/atlases/formal/sunflower.webp';
+import cactusAtlas from '../../assets/characters/atlases/formal/cactus.webp';
+
+const AVATAR_ATLAS_SOURCES = Object.freeze({
+  'american-shorthair': americanShorthairAtlas,
+  'maine-coon': maineCoonAtlas,
+  ragdoll: ragdollAtlas,
+  shiba: shibaAtlas,
+  'teddy-bear': teddyBearAtlas,
+  'lop-bunny': lopBunnyAtlas,
+  tomato: tomatoAtlas,
+  apple: appleAtlas,
+  strawberry: strawberryAtlas,
+  monstera: monsteraAtlas,
+  sunflower: sunflowerAtlas,
+  cactus: cactusAtlas,
+});
 
 const VISUAL = {
   focus: {
@@ -185,14 +216,51 @@ function ExpandableTaskName({ text, meta, className = '', onDoubleClick }) {
   );
 }
 
-function CompanionPet({ companion, open, onClick }) {
+function CharacterPortrait({ avatarId, className = '' }) {
+  const option = characterOption(avatarId);
+  const source = option.sheet === 'nature' ? companionNaturePortraitSheet : companionPortraitSheet;
+  return <span className={`character-portrait ${className}`} style={{ '--character-sheet': `url(${source})`, '--character-position': option.sprite }} aria-label={option.label} role="img" />;
+}
+
+function AvatarRenderer({ avatarRef, activity = 'idle', renderMode = 'thumbnail', reducedMotion = false, className = '' }) {
+  const [now, setNow] = useState(() => Date.now());
+  const animation = avatarFrameAt(activity, now, { reducedMotion });
+  const option = characterOption(avatarRef);
+  const atlas = AVATAR_ATLAS_SOURCES[option.id];
+  const columnPosition = `${(animation.frame / 7) * 100}%`;
+  const rowPosition = `${(animation.row / 5) * 100}%`;
+  useEffect(() => {
+    if (reducedMotion) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), Math.max(80, Math.round(1000 / animation.fps)));
+    return () => window.clearInterval(timer);
+  }, [animation.fps, reducedMotion]);
+  return <span className={`avatar-renderer render-${renderMode} ${className}`} data-avatar-animation={animation.animation} data-avatar-frame={animation.frame} data-avatar-frames={animation.frameCount} aria-label={`${option.label}，${animation.animation}`} role="img">{atlas ? <span className="avatar-atlas-frame" style={{ '--avatar-atlas': `url(${atlas})`, '--avatar-atlas-position': `${columnPosition} ${rowPosition}` }} /> : <CharacterPortrait avatarId={avatarRef} />}</span>;
+}
+
+function CharacterSetup({ onComplete }) {
+  const [name, setName] = useState('小番茄');
+  const [avatarId, setAvatarId] = useState(CHARACTER_OPTIONS[0].id);
+  const submit = (event) => {
+    event.preventDefault();
+    const profile = normalizeCharacterProfile({ name, avatarId });
+    if (profile) onComplete(profile);
+  };
+  return <div className="character-setup-backdrop"><form className="character-setup glass-panel" onSubmit={submit}>
+    <span className="eyebrow">先认识一下</span><h1>创建你的桌边角色</h1><p>选择一位陪你慢慢专注的小伙伴，之后也可以随时更换。</p>
+    <div className="character-option-grid">{CHARACTER_OPTIONS.map((option) => <button type="button" key={option.id} className={avatarId === option.id ? 'active' : ''} onClick={() => setAvatarId(option.id)} aria-pressed={avatarId === option.id}><AvatarRenderer avatarRef={option.id} renderMode="selector" reducedMotion /><strong>{option.label}</strong><small>{option.detail}</small></button>)}</div>
+    <label>角色昵称<input value={name} maxLength={24} onChange={(event) => setName(event.target.value)} placeholder="给角色起个名字" required /></label>
+    <button className="character-setup-confirm" type="submit">带 {characterOption(avatarId).label} 开始专注</button>
+  </form></div>;
+}
+
+function CompanionPet({ companion, profile, open, onClick }) {
   const friend = normalizeCompanion(companion);
   const isTyping = friend.state === 'typing';
   return (
     <button className={`companion-pet state-${friend.state} ${open ? 'open' : ''}`} onClick={onClick} aria-label={`打开与${friend.name}的陪伴面板`} aria-expanded={open}>
       <span className="companion-pet-aura" aria-hidden="true" />
       <span className="companion-pet-bubble">{isTyping ? `${friend.name}正在输入…` : friend.state === 'offline' ? '好友暂时不在' : `${friend.name} ${companionStateLabel(friend.state)}`}</span>
-      <span className="companion-cat" aria-hidden="true"><span className="companion-cat-face">🐱</span><span className="companion-keyboard">▰ ▰ ▰</span></span>
+      <span className="companion-cat" aria-hidden="true"><AvatarRenderer avatarRef={profile?.avatarId || friend.avatarId} activity={friend.state} renderMode="pet" className="companion-pet-portrait" /><span className="companion-keyboard">▰ ▰ ▰</span></span>
       <span className="companion-status-dot" aria-hidden="true" />
       <span className="companion-pet-label">桌边陪伴</span>
     </button>
@@ -266,7 +334,7 @@ function CompanionPanel({ open, room, companions, selectedId, messages, together
             <div className={`companion-friend-list count-${friendListSize}`}>
               {companions.map((friend) => (
                 <button className={`companion-friend ${friend.id === selected?.id ? 'active' : ''}`} key={friend.id} onClick={() => onSelect(friend.id)}>
-                  <span className={`companion-avatar ${friend.avatarTone || 'rose'}`}>🐱</span>
+                  <span className={`companion-avatar ${friend.avatarTone || 'rose'}`}><AvatarRenderer avatarRef={friend.avatarId} activity={friend.state} renderMode="thumbnail" /></span>
                   <span className="companion-friend-copy"><strong>{friend.name}</strong><small><i className={`companion-state-dot state-${friend.state}`} /> {companionStateLabel(friend.state)} · {companionActivityLabel(friend)}</small><em>{friend.durationLabel}</em></span>
                   {friend.unread > 0 && <b className="companion-unread">{friend.unread}</b>}
                 </button>
@@ -275,7 +343,7 @@ function CompanionPanel({ open, room, companions, selectedId, messages, together
             {selected ? (
               <>
                 <section className="companion-conversation">
-                <div className="companion-selected"><span className={`companion-selected-icon state-${selected.state}`}>🐱</span><div><strong>{selected.name}</strong><small>{companionActivityLabel(selected)}{selected.state === 'typing' ? ' · 不显示输入内容' : ''}</small></div></div>
+                <div className="companion-selected"><span className={`companion-selected-icon state-${selected.state}`}><AvatarRenderer avatarRef={selected.avatarId} activity={selected.state} renderMode="thumbnail" /></span><div><strong>{selected.name}</strong><small>{companionActivityLabel(selected)}{selected.state === 'typing' ? ' · 不显示输入内容' : ''}</small></div></div>
                 {member && <div className="companion-member-permissions"><span>对 {selected.name} 共享</span>{[['shareOnline', '在线'], ['shareTyping', '输入'], ['shareActivity', '活动'], ['shareTask', '任务']].map(([key, label]) => <label key={key}><input type="checkbox" checked={Boolean(member.permissions?.[key])} onChange={(event) => onMemberPermissionsChange(selected.id, key, event.target.checked)} />{label}</label>)}</div>}
                 <button className="companion-together" onClick={() => onStartTogether(selected.id)} disabled={selected.state === 'offline' || (isTogether && !isPausedTogether) || inviteStatus === 'outgoing'}><span>🪑</span>{selected.state === 'offline' ? '等她回来再一起坐下' : inviteStatus === 'incoming' ? `接受${selected.name}的邀请` : inviteStatus === 'outgoing' ? `等待${selected.name}回应` : inviteStatus === 'accepted' ? `和${selected.name}开始专注` : isPausedTogether ? `和${selected.name}继续专注` : isTogether ? '正在一起专注' : `和${selected.name}一起坐下`}</button>
                 <div className="companion-actions" aria-label="陪伴互动">
@@ -643,6 +711,7 @@ export default function App() {
   }))));
   const [companionMessages, setCompanionMessages] = useState(() => loadJson(localStorage, 'tomato.companionMessages', INITIAL_COMPANION_MESSAGES) || INITIAL_COMPANION_MESSAGES);
   const [companionPrivacy, setCompanionPrivacy] = useState(() => ({ ...DEFAULT_COMPANION_PRIVACY, ...(loadJson(localStorage, 'tomato.companionPrivacy', {}) || {}) }));
+  const [characterProfile, setCharacterProfile] = useState(() => normalizeCharacterProfile(loadJson(localStorage, 'tomato.characterProfile', null)));
   const [companionServer, setCompanionServer] = useState(() => loadJson(localStorage, 'tomato.companionServer', companionServerUrl()) || companionServerUrl());
   const [companionSession, setCompanionSession] = useState(null);
   const [companionConnection, setCompanionConnection] = useState({ connected: false, reconnecting: false });
@@ -760,7 +829,7 @@ export default function App() {
     const members = (room.members || []).map((member) => ({ ...member, name: member.displayName || member.name }));
     setCompanionRoom((current) => normalizeCompanionRoom({ ...room, members, events: current?.events || [] }));
     const friends = members.filter((member) => member.id !== ownId).map((member) => normalizeCompanion({
-      id: member.id, name: member.name, state: 'offline', activity: '暂时不在线', durationLabel: '', unread: 0, permissions: member.permissions,
+      id: member.id, name: member.name, state: 'offline', activity: '暂时不在线', durationLabel: '', unread: 0, avatarId: member.avatarId, permissions: member.permissions,
     }));
     setCompanions(friends);
     setSelectedCompanionId((current) => friends.some((friend) => friend.id === current) ? current : friends[0]?.id || null);
@@ -780,7 +849,7 @@ export default function App() {
   };
   const authenticateCompanion = async (mode, credentials) => {
     try {
-      const response = await companionRequest(`/api/auth/${mode === 'register' ? 'register' : 'login'}`, { method: 'POST', body: credentials, baseUrl: companionServer });
+      const response = await companionRequest(`/api/auth/${mode === 'register' ? 'register' : 'login'}`, { method: 'POST', body: { ...credentials, avatarId: characterProfile?.avatarId }, baseUrl: companionServer });
       await syncCompanionAccount(response.token, response.user);
       flashCompanionNotice(mode === 'register' ? '账号已创建，接下来可以新建或加入陪伴房。' : '已登录并同步陪伴房。');
     } catch (error) { flashCompanionNotice(error.message || '无法连接陪伴服务。'); }
@@ -1330,6 +1399,7 @@ export default function App() {
   useEffect(() => { saveJson(localStorage, 'tomato.companionRoom', companionRoom); }, [companionRoom]);
   useEffect(() => { saveJson(localStorage, 'tomato.companionMessages', companionMessages); }, [companionMessages]);
   useEffect(() => { saveJson(localStorage, 'tomato.companionPrivacy', companionPrivacy); }, [companionPrivacy]);
+  useEffect(() => { if (characterProfile) saveJson(localStorage, 'tomato.characterProfile', characterProfile); }, [characterProfile]);
   useEffect(() => { saveJson(localStorage, 'tomato.companionServer', companionServer); }, [companionServer]);
   useEffect(() => {
     if (!companionSession) return;
@@ -1399,9 +1469,10 @@ export default function App() {
           <TasksPanel tasks={tasks} setTasks={setTasks} onToggleTask={toggleTask} notice={notice} today={today} />
         </main>
       )}
-      {view === 'today' && <CompanionPet companion={primaryFriend} open={companionOpen} onClick={() => { setCompanionOpen((value) => !value); setSelectedCompanionId(primaryFriend.id); }} />}
+      {view === 'today' && <CompanionPet companion={primaryFriend} profile={characterProfile} open={companionOpen} onClick={() => { setCompanionOpen((value) => !value); setSelectedCompanionId(primaryFriend.id); }} />}
       <CompanionPanel open={companionOpen && view === 'today'} room={companionRoom} companions={companions} selectedId={selectedCompanionId} messages={companionMessages} togetherId={togetherCompanionId} togetherInvite={togetherInvite} session={companionSession} serverUrl={companionServer} connection={companionConnection} onServerUrlChange={setCompanionServer} onAuthenticate={authenticateCompanion} onCreateRoom={createRemoteRoom} onJoinRoom={joinRemoteRoom} onSelect={selectCompanion} onClose={() => setCompanionOpen(false)} onReaction={sendCompanionReaction} onSendMessage={sendCompanionMessage} onQuickMessage={sendCompanionQuickMessage} onTyping={(isTyping) => companionRealtimeRef.current?.send({ type: 'typing', roomId: companionRoom?.id, isTyping })} onChangeState={changeCompanionState} onStartTogether={startTogetherFocus} onCopyInvite={copyCompanionInvite} onMemberPermissionsChange={changeRoomMemberPermissions} />
       <TogetherResultCard result={togetherResult} onClose={() => setTogetherResult(null)} />
+      {!isMini && !characterProfile && <CharacterSetup onComplete={setCharacterProfile} />}
       {companionNotice && <div className="companion-toast" role="status">{companionNotice}</div>}
       <footer className="bottom-bar glass-line">
         <div className="today-focus"><span>今日专注</span><strong>{todayFocusLabel}</strong></div>

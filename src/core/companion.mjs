@@ -36,6 +36,7 @@ export const INITIAL_COMPANIONS = Object.freeze([
     activity: '正在写作业',
     durationLabel: '18 分钟',
     avatarTone: 'rose',
+    avatarId: 'ragdoll',
   },
   {
     id: 'yue',
@@ -44,6 +45,7 @@ export const INITIAL_COMPANIONS = Object.freeze([
     activity: '准备开始',
     durationLabel: '刚刚上线',
     avatarTone: 'leaf',
+    avatarId: 'shiba',
     unread: 1,
   },
 ]);
@@ -63,6 +65,7 @@ export function normalizeCompanion(value = {}) {
     activity: String(value.activity || COMPANION_STATES[state].activity),
     durationLabel: String(value.durationLabel || ''),
     avatarTone: String(value.avatarTone || 'rose'),
+    avatarId: String(value.avatarId || ''),
     unread: Math.max(0, Number(value.unread) || 0),
   };
 }
